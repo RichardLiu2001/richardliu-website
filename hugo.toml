@@ -1,0 +1,25 @@
+baseURL = 'https://example.org/'   # TODO: update once you pick a domain/host
+locale = 'en-us'
+title = 'Richard Liu website'
+theme = 'papermod'
+
+[params]
+  env = 'production'
+  defaultTheme = 'auto'       # respects visitor's light/dark preference
+  ShowReadingTime = true
+  ShowShareButtons = false
+  ShowPostNavLinks = true
+  ShowBreadCrumbs = true
+  ShowCodeCopyButtons = true
+
+[[menu.main]]
+  identifier = 'home'
+  name = 'Home'
+  url = '/'
+  weight = 10
+
+[[menu.main]]
+  identifier = 'posts'
+  name = 'Posts'
+  url = '/posts/'
+  weight = 20
