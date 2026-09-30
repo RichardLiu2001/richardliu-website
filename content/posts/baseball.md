@@ -1,6 +1,6 @@
 +++
 date = '2026-09-26T18:49:33-04:00'
-draft = true
+draft = false
 title = 'Baseball I: Game Flow'
 +++
 Have you ever watched baseball, looked at the scoreboard, and asked yourself "what the fuck is this bullshit?"
