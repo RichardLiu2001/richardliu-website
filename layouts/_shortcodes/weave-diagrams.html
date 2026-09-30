@@ -1,0 +1,205 @@
+{{- /*
+  Animated diagrams of plain, twill, and satin weaves and a jersey knit.
+  Usage in a post: {{< weave-diagrams >}}
+*/ -}}
+<style>
+  .wv-root {
+    --wv-warp: #3d5a99;
+    --wv-weft: #eadfc4;
+    --wv-knit-a: #c2562e;
+    --wv-knit-b: #e9a66c;
+    --wv-edge: rgba(0, 0, 0, 0.35);
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+  }
+  :root[data-theme="dark"] .wv-root {
+    --wv-warp: #6f8fd8;
+    --wv-weft: #d8ccad;
+    --wv-knit-a: #e07a50;
+    --wv-knit-b: #f2c08f;
+    --wv-edge: rgba(0, 0, 0, 0.6);
+  }
+  .wv-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  @media (max-width: 760px) { .wv-grid { grid-template-columns: repeat(2, 1fr); } }
+  .wv-panel { margin: 0; text-align: center; }
+  .wv-panel svg { display: block; width: 100%; max-width: 220px; height: auto; margin: 0 auto 8px; border-radius: 6px; background: var(--code-bg); }
+  .wv-root .wv-panel figcaption { font-weight: normal; font-size: 14px; line-height: 1.45; color: var(--secondary); }
+  .wv-root .wv-panel figcaption strong { display: block; font-size: 16px; color: var(--primary); margin-bottom: 2px; }
+  .wv-thread { stroke: var(--wv-edge); stroke-width: 0.8; }
+  .wv-warp { fill: var(--wv-warp); }
+  .wv-weft { fill: var(--wv-weft); }
+  .wv-knit { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .wv-footer { display: flex; justify-content: center; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--secondary); }
+  .wv-key { display: inline-flex; align-items: center; gap: 6px; }
+  .wv-key i { width: 12px; height: 12px; border-radius: 2px; border: 1px solid var(--wv-edge); display: inline-block; }
+  .wv-footer button {
+    font: inherit; font-size: 13px; padding: 3px 12px; cursor: pointer;
+    color: var(--primary); background: var(--entry);
+    border: 1px solid var(--tertiary); border-radius: 999px;
+  }
+</style>
+
+<div class="wv-root">
+  <div class="wv-grid">
+    <figure class="wv-panel" data-weave="plain">
+      <svg viewBox="0 0 200 200" role="img" aria-label="Plain weave"></svg>
+      <figcaption><strong>Plain weave</strong>Over one, under one. Tight and crisp: percale, chambray.</figcaption>
+    </figure>
+    <figure class="wv-panel" data-weave="twill">
+      <svg viewBox="0 0 200 200" role="img" aria-label="Twill weave"></svg>
+      <figcaption><strong>Twill weave</strong>Over three, under one, shifted one step each row, which makes diagonal lines: denim, chino.</figcaption>
+    </figure>
+    <figure class="wv-panel" data-weave="satin">
+      <svg viewBox="0 0 200 200" role="img" aria-label="Satin weave"></svg>
+      <figcaption><strong>Satin weave</strong>Long floats over four threads. Smooth and shiny, but snags easily.</figcaption>
+    </figure>
+    <figure class="wv-panel" data-weave="knit">
+      <svg viewBox="0 0 200 200" role="img" aria-label="Jersey knit"></svg>
+      <figcaption><strong>Jersey knit</strong>One yarn per row, looped through the row below. No crossing threads, so it stretches.</figcaption>
+    </figure>
+  </div>
+  <div class="wv-footer">
+    <span class="wv-key"><i style="background: var(--wv-warp)"></i>Warp (lengthwise)</span>
+    <span class="wv-key"><i style="background: var(--wv-weft)"></i>Weft (crosswise)</span>
+    <span class="wv-key"><i style="background: var(--wv-knit-a)"></i><i style="background: var(--wv-knit-b)"></i>Knit rows</span>
+    <button type="button" data-wv-replay>Replay</button>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const NS = 'http://www.w3.org/2000/svg';
+    const N = 10, S = 20, T = 15, PAD = (S - T) / 2; // cells, cell size, thread width
+    const ROW_SECONDS = 0.28;
+    const KNIT_ROWS = 5;
+
+    // Is the warp (vertical thread) on top at row i, column j?
+    const PATTERNS = {
+      plain: (i, j) => (i + j) % 2 === 0,
+      twill: (i, j) => (j - i + 40) % 4 !== 0,        // 3/1 twill: weft shows once every 4, shifting each row
+      satin: (i, j) => (j - 2 * i + 50) % 5 !== 0,    // 5-harness satin: tie points spread out, no diagonal
+    };
+
+    const el = (tag, attrs, parent) => {
+      const e = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      parent.appendChild(e);
+      return e;
+    };
+
+    // ---- Weaves: warp threads are fixed; each weft row slides in, alternating direction ----
+    function buildWeave(svg, isWarpUp) {
+      for (let j = 0; j < N; j++) el('rect', { class: 'wv-thread wv-warp', x: j * S + PAD, y: 0, width: T, height: 200 }, svg);
+      const rows = [];
+      for (let i = 0; i < N; i++) {
+        const g = el('g', {}, svg);
+        const weft = el('rect', { class: 'wv-thread wv-weft', x: 0, y: i * S + PAD, width: 200, height: T }, g);
+        const overs = [];
+        for (let j = 0; j < N; j++) {
+          if (!isWarpUp(i, j)) continue;
+          overs.push({ j, rect: el('rect', { class: 'wv-thread wv-warp', x: j * S + PAD, y: i * S - 1.5, width: T, height: S + 3, rx: 2 }, g) });
+        }
+        rows.push({ i, weft, overs, rtl: i % 2 === 1 });
+      }
+      // progress p in [0, 1] for this row
+      return (i, p) => {
+        const r = rows[i], w = 200 * p;
+        r.weft.setAttribute('width', w);
+        r.weft.setAttribute('x', r.rtl ? 200 - w : 0);
+        r.weft.style.display = p > 0 ? '' : 'none';
+        r.overs.forEach(({ j, rect }) => {
+          const cellStart = r.rtl ? 200 - (j + 1) * S : j * S;
+          rect.style.display = w > cellStart + S / 2 ? '' : 'none';
+        });
+      };
+    }
+
+    // ---- Knit: rows of loops, each row pulled through the heads of the row below ----
+    function buildKnit(svg) {
+      const W = 50, DY = 40, SW = 7;
+      // One row of yarn: for each stitch, legs rise from the sinker loops into a round head
+      const coursePath = (neckY) => {
+        const headY = neckY - 24, sinkY = neckY + 18;
+        let d = `M ${-W} ${sinkY}`;
+        for (let k = -1; k <= 4; k++) {
+          const cx = k * W + W / 2;
+          d += ` C ${cx - 0.32 * W} ${sinkY}, ${cx - 0.14 * W} ${neckY + 6}, ${cx - 0.14 * W} ${neckY}`;
+          d += ` C ${cx - 0.14 * W} ${neckY - 10}, ${cx - 0.36 * W} ${headY}, ${cx} ${headY}`;
+          d += ` C ${cx + 0.36 * W} ${headY}, ${cx + 0.14 * W} ${neckY - 10}, ${cx + 0.14 * W} ${neckY}`;
+          d += ` C ${cx + 0.14 * W} ${neckY + 6}, ${cx + 0.32 * W} ${sinkY}, ${cx + W / 2} ${sinkY}`;
+        }
+        return d;
+      };
+      // The top of each head, redrawn over the row above so that row's loops pass through it
+      const headTopPath = (neckY, k) => {
+        const cx = k * W + W / 2, headY = neckY - 24;
+        return `M ${cx - 0.3 * W} ${neckY - 14} C ${cx - 0.3 * W} ${headY + 3}, ${cx - 0.16 * W} ${headY}, ${cx} ${headY}` +
+               ` C ${cx + 0.16 * W} ${headY}, ${cx + 0.3 * W} ${headY + 3}, ${cx + 0.3 * W} ${neckY - 14}`;
+      };
+      const color = (r) => (r % 2 ? 'var(--wv-knit-b)' : 'var(--wv-knit-a)');
+      const strokePair = (g, d, c, attrs = {}) => [
+        el('path', { class: 'wv-knit', d, stroke: 'var(--wv-edge)', 'stroke-width': SW + 2.5, ...attrs }, g),
+        el('path', { class: 'wv-knit', d, stroke: c, 'stroke-width': SW, ...attrs }, g),
+      ];
+      const rows = [];
+      for (let r = 0; r < KNIT_ROWS; r++) {
+        const neckY = 182 - r * DY;
+        const paths = strokePair(el('g', {}, svg), coursePath(neckY), color(r), { pathLength: 1, 'stroke-dasharray': '1 1' });
+        const heads = [];
+        if (r > 0) for (let k = -1; k <= 4; k++) heads.push(el('g', {}, svg)), strokePair(heads.at(-1), headTopPath(neckY + DY, k), color(r - 1));
+        rows.push({ paths, heads });
+      }
+      // Knitting grows upward: row 0 is the bottom row
+      return (i, p) => {
+        const r = rows[i];
+        r.paths.forEach((path) => {
+          path.setAttribute('stroke-dashoffset', 1 - p);
+          path.style.display = p > 0 ? '' : 'none';
+        });
+        r.heads.forEach((h) => (h.style.display = p > 0 ? '' : 'none'));
+      };
+    }
+
+    const panels = [...root.querySelectorAll('.wv-panel')].map((fig) => {
+      const svg = fig.querySelector('svg');
+      const kind = fig.dataset.weave;
+      const setRow = kind === 'knit' ? buildKnit(svg) : buildWeave(svg, PATTERNS[kind]);
+      const rowCount = kind === 'knit' ? KNIT_ROWS : N;
+      return { setRow, rowCount };
+    });
+
+    function draw(t) { // t = rows completed, possibly fractional
+      panels.forEach(({ setRow, rowCount }) => {
+        const scaled = t * rowCount / N;
+        for (let i = 0; i < rowCount; i++) setRow(i, Math.max(0, Math.min(1, scaled - i)));
+      });
+    }
+
+    let start = null, frame = null;
+    function play() {
+      cancelAnimationFrame(frame);
+      start = null;
+      const step = (now) => {
+        start ??= now;
+        const t = (now - start) / 1000 / ROW_SECONDS;
+        draw(t);
+        if (t < N) frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+    }
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    draw(reduceMotion ? N : 0);
+    root.querySelector('[data-wv-replay]').addEventListener('click', () => (reduceMotion ? draw(N) : play()));
+
+    // Start the animation the first time the diagrams scroll into view
+    if (!reduceMotion) {
+      const io = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) { play(); io.disconnect(); }
+      }, { threshold: 0.3 });
+      io.observe(root);
+    }
+  })();
+</script>

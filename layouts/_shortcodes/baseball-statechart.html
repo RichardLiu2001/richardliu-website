@@ -1,0 +1,230 @@
+{{- /*
+  Nested, expandable statechart for Baseball I.
+  Usage in a post: {{< baseball-statechart >}}
+  Boxes with a blue border contain their own state machine; click one to expand it.
+*/ -}}
+<style>
+  .sc-root {
+    --sc-accent: rgb(37, 99, 235);
+    --sc-accent-bg: rgba(37, 99, 235, 0.08);
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+  }
+  :root[data-theme="dark"] .sc-root {
+    --sc-accent: rgb(96, 165, 250);
+    --sc-accent-bg: rgba(96, 165, 250, 0.12);
+  }
+  .sc-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .sc-root { --sc-cond: #b45309; --sc-upd: #047857; }
+  :root[data-theme="dark"] .sc-root { --sc-cond: #fbbf24; --sc-upd: #34d399; }
+  .sc-root svg .sc-cond, .sc-root svg .sc-upd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+  .sc-root svg .sc-cond { fill: var(--sc-cond); }
+  .sc-root svg .sc-upd { fill: var(--sc-upd); }
+  .sc-key { display: flex; gap: 14px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .sc-key .c { color: var(--sc-cond); }
+  .sc-key .u { color: var(--sc-upd); }
+  .sc-toolbar button {
+    font: inherit; font-size: 14px; padding: 4px 12px; cursor: pointer;
+    color: var(--primary); background: var(--entry);
+    border: 1px solid var(--tertiary); border-radius: var(--radius);
+  }
+  .sc-level {
+    border: 1px solid var(--tertiary); border-radius: var(--radius);
+    padding: 12px 16px 16px; background: var(--entry);
+  }
+  /* PaperMod's reset sets section { display: block }, which would override the hidden attribute */
+  .sc-level[hidden] { display: none; }
+  .sc-level .sc-level { margin-top: 12px; border: 2px solid var(--sc-accent); background: var(--theme); }
+  .sc-level .sc-level .sc-level { background: var(--entry); }
+  .sc-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
+  .sc-head strong { font-size: 17px; color: var(--primary); }
+  .sc-head span { font-size: 14px; color: var(--secondary); }
+  .sc-root svg { display: block; width: 100%; height: auto; margin: 0 auto; overflow: visible; }
+  .sc-root svg text { fill: var(--primary); font-size: 13px; }
+  .sc-root svg .sc-small { font-size: 11.5px; fill: var(--secondary); }
+  .sc-root svg .sc-label { font-size: 12px; fill: var(--secondary); }
+  .sc-root svg .sc-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; fill: var(--secondary); }
+  .sc-node rect { fill: var(--entry); stroke: var(--secondary); stroke-width: 1.2; }
+  .sc-term rect { fill: var(--code-bg); stroke: var(--secondary); stroke-width: 1.2; }
+  .sc-start { fill: var(--primary); }
+  .sc-edge { fill: none; stroke: var(--secondary); stroke-width: 1.4; }
+  .sc-arrowhead { fill: var(--secondary); }
+  .sc-child { cursor: pointer; outline: none; }
+  .sc-child rect { fill: var(--sc-accent-bg); stroke: var(--sc-accent); stroke-width: 2; }
+  .sc-child:hover rect, .sc-child:focus-visible rect { stroke-width: 3; }
+  .sc-child .sc-caret { fill: var(--sc-accent); font-weight: bold; }
+  .sc-caption { font-size: 14px; color: var(--secondary); margin: 8px 0 0; }
+</style>
+
+<div class="sc-root">
+  <div class="sc-toolbar"><div class="sc-key"><span class="c">event [condition]</span><span class="u">update</span></div><button type="button" data-sc-all>Expand all</button></div>
+
+  <!-- ============ Level 1: Game ============ -->
+  <section class="sc-level">
+    <div class="sc-head"><strong>Game</strong><span>state: inning, score</span></div>
+    <svg viewBox="0 0 800 250" role="img" aria-label="Game state machine">
+      <defs>
+        <marker id="sc-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="sc-arrowhead" d="M0,0 L10,5 L0,10 z"/>
+        </marker>
+      </defs>
+
+      <!-- start -->
+      <circle class="sc-start" cx="24" cy="110" r="6"/>
+      <text class="sc-upd" x="14" y="160">inning = 1, score 0–0</text>
+      <path class="sc-edge" d="M30 110 H50" marker-end="url(#sc-arrow)"/>
+
+      <!-- Top of inning (contains a half inning) -->
+      <g class="sc-child" data-target="sc-half" role="button" tabindex="0" aria-expanded="false">
+        <rect x="50" y="85" width="150" height="50" rx="6"/>
+        <text x="125" y="106" text-anchor="middle">Top of inning <tspan class="sc-caret">▸</tspan></text>
+        <text class="sc-small" x="125" y="124" text-anchor="middle">away team bats</text>
+      </g>
+
+      <!-- Top → Bottom -->
+      <path class="sc-edge" d="M200 110 H438" marker-end="url(#sc-arrow)"/>
+      <text class="sc-cond" x="319" y="102" text-anchor="middle">3 outs [otherwise]</text>
+
+      <!-- Bottom of inning (contains a half inning) -->
+      <g class="sc-child" data-target="sc-half" role="button" tabindex="0" aria-expanded="false">
+        <rect x="440" y="85" width="150" height="50" rx="6"/>
+        <text x="515" y="106" text-anchor="middle">Bottom of inning <tspan class="sc-caret">▸</tspan></text>
+        <text class="sc-small" x="515" y="124" text-anchor="middle">home team bats</text>
+      </g>
+
+      <!-- Bottom → next inning -->
+      <path class="sc-edge" d="M515 85 V36 H125 V83" marker-end="url(#sc-arrow)"/>
+      <text class="sc-cond" x="320" y="28" text-anchor="middle">3 outs [otherwise]</text>
+      <text class="sc-upd" x="320" y="52" text-anchor="middle">inning += 1</text>
+
+      <!-- endings -->
+      <g class="sc-term"><rect x="300" y="200" width="130" height="34" rx="17"/>
+        <text x="365" y="221" text-anchor="middle">HOME WINS</text></g>
+      <g class="sc-term"><rect x="655" y="200" width="130" height="34" rx="17"/>
+        <text x="720" y="221" text-anchor="middle">AWAY WINS</text></g>
+
+      <path class="sc-edge" d="M175 135 V217 H298" marker-end="url(#sc-arrow)"/>
+      <text class="sc-cond" x="183" y="180">3 outs [9th+ &amp; home leads]</text>
+      <path class="sc-edge" d="M515 135 V217 H432" marker-end="url(#sc-arrow)"/>
+      <text class="sc-cond" x="523" y="180">walk-off</text>
+      <path class="sc-edge" d="M590 110 H720 V198" marker-end="url(#sc-arrow)"/>
+      <text class="sc-cond" x="598" y="102">3 outs [9th+ &amp; away leads]</text>
+    </svg>
+    <!-- ============ Level 2: Half inning ============ -->
+    <section class="sc-level" id="sc-half" hidden>
+      <div class="sc-head"><strong>Half inning</strong><span>inside Top / Bottom of inning · state: outs, runs</span></div>
+      <svg viewBox="0 0 700 240" role="img" aria-label="Half inning state machine">
+        <circle class="sc-start" cx="24" cy="110" r="6"/>
+        <text class="sc-upd" x="14" y="160">outs = 0, runs = 0</text>
+        <path class="sc-edge" d="M30 110 H50" marker-end="url(#sc-arrow)"/>
+
+        <!-- Plate appearance (contains the count machine) -->
+        <g class="sc-child" data-target="sc-pa" role="button" tabindex="0" aria-expanded="false">
+          <rect x="50" y="85" width="180" height="50" rx="6"/>
+          <text x="140" y="106" text-anchor="middle">Plate appearance <tspan class="sc-caret">▸</tspan></text>
+          <text class="sc-small" x="140" y="124" text-anchor="middle">one batter</text>
+        </g>
+
+        <!-- next batter -->
+        <path class="sc-edge" d="M226 85 V40 H54 V83" marker-end="url(#sc-arrow)"/>
+        <text class="sc-cond" x="140" y="30" text-anchor="middle">ends [outs + k &lt; 3]</text>
+        <text class="sc-upd" x="140" y="58" text-anchor="middle">outs += k, runs += r</text>
+
+        <!-- endings -->
+        <path class="sc-edge" d="M230 110 H458" marker-end="url(#sc-arrow)"/>
+        <text class="sc-cond" x="344" y="102" text-anchor="middle">ends [outs + k ≥ 3]</text>
+        <text class="sc-upd" x="344" y="126" text-anchor="middle">outs += k, runs += r</text>
+        <g class="sc-term"><rect x="460" y="93" width="210" height="34" rx="17"/>
+          <text x="565" y="114" text-anchor="middle">3 outs: half inning over</text></g>
+
+        <path class="sc-edge" d="M200 135 V207 H218" marker-end="url(#sc-arrow)"/>
+        <text class="sc-cond" x="208" y="178">walk-off</text>
+        <g class="sc-term"><rect x="220" y="190" width="150" height="34" rx="17"/>
+          <text x="295" y="211" text-anchor="middle">Game over</text></g>
+      </svg>
+      <p class="sc-caption">k and r are the outs and runs from that plate appearance; where they come from is baserunning (Baseball II). Walk-off: the home team takes the lead in the bottom of the 9th or later.</p>
+
+      <!-- ============ Level 3: Plate appearance ============ -->
+      <section class="sc-level" id="sc-pa" hidden>
+        <div class="sc-head"><strong>Plate appearance</strong><span>inside Half inning · state: balls, strikes</span></div>
+        <svg viewBox="0 0 830 320" role="img" aria-label="Plate appearance state machine">
+          <circle class="sc-start" cx="24" cy="170" r="6"/>
+          <text class="sc-upd" x="14" y="220">balls = 0, strikes = 0</text>
+          <path class="sc-edge" d="M30 170 H50" marker-end="url(#sc-arrow)"/>
+
+          <g class="sc-node">
+            <rect x="50" y="145" width="170" height="50" rx="6"/>
+            <text x="135" y="166" text-anchor="middle">At bat</text>
+            <text class="sc-small" x="135" y="184" text-anchor="middle">balls, strikes</text>
+          </g>
+
+          <!-- count updates -->
+          <path class="sc-edge" d="M185 145 V96 H85 V143" marker-end="url(#sc-arrow)"/>
+          <text class="sc-cond" x="150" y="22" text-anchor="end">ball [balls &lt; 3]</text>
+          <text class="sc-upd" x="160" y="22">balls += 1</text>
+          <text class="sc-cond" x="150" y="38" text-anchor="end">strike [strikes &lt; 2]</text>
+          <text class="sc-upd" x="160" y="38">strikes += 1</text>
+          <text class="sc-cond" x="150" y="54" text-anchor="end">foul</text>
+          <text class="sc-upd" x="160" y="54">strikes = min(2, strikes + 1)</text>
+
+          <!-- endings -->
+          <path class="sc-edge" d="M220 170 C340 170, 350 55, 458 55" marker-end="url(#sc-arrow)"/>
+          <path class="sc-edge" d="M220 170 C340 170, 350 128, 458 128" marker-end="url(#sc-arrow)"/>
+          <path class="sc-edge" d="M220 170 C340 170, 350 212, 458 212" marker-end="url(#sc-arrow)"/>
+          <path class="sc-edge" d="M220 170 C340 170, 350 285, 458 285" marker-end="url(#sc-arrow)"/>
+
+          <g class="sc-term"><rect x="460" y="38" width="120" height="34" rx="17"/><text x="520" y="59" text-anchor="middle">OUT</text></g>
+          <g class="sc-term"><rect x="460" y="111" width="120" height="34" rx="17"/><text x="520" y="132" text-anchor="middle">HIT</text></g>
+          <g class="sc-term"><rect x="460" y="195" width="120" height="34" rx="17"/><text x="520" y="216" text-anchor="middle">WALK</text></g>
+          <g class="sc-term"><rect x="460" y="268" width="120" height="34" rx="17"/><text x="520" y="289" text-anchor="middle">HIT BY PITCH</text></g>
+
+          <text class="sc-cond" x="594" y="51">strike [strikes = 2]</text>
+          <text class="sc-cond" x="594" y="68">ball in play, out · foul caught</text>
+          <text class="sc-cond" x="594" y="132">ball in play, safe</text>
+          <text class="sc-cond" x="594" y="216">ball [balls = 3]</text>
+          <text class="sc-cond" x="594" y="289">hit by pitch</text>
+        </svg>
+        <p class="sc-caption">A strike is called or swinging. With 2 strikes, a foul doesn't change the count.</p>
+      </section>
+    </section>
+  </section>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const children = [...root.querySelectorAll('.sc-child')];
+    const levels = [...root.querySelectorAll('.sc-level[id]')];
+    const allButton = root.querySelector('[data-sc-all]');
+
+    // Sync every box's caret and aria-expanded with whether its level is shown
+    function sync() {
+      children.forEach((g) => {
+        const open = !document.getElementById(g.dataset.target).hidden;
+        g.setAttribute('aria-expanded', open);
+        g.querySelector('.sc-caret').textContent = open ? '▾' : '▸';
+      });
+      allButton.textContent = levels.every((l) => !l.hidden) ? 'Collapse all' : 'Expand all';
+    }
+
+    function toggle(g) {
+      const level = document.getElementById(g.dataset.target);
+      level.hidden = !level.hidden;
+      sync();
+    }
+
+    children.forEach((g) => {
+      g.addEventListener('click', () => toggle(g));
+      g.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(g); }
+      });
+    });
+
+    allButton.addEventListener('click', () => {
+      const expand = levels.some((l) => l.hidden);
+      levels.forEach((l) => (l.hidden = !expand));
+      sync();
+    });
+  })();
+</script>

@@ -1,0 +1,238 @@
+{{- /*
+  Pick a makeup product to see its BATs (why), LAYER (when), and FACE_REGIONS (where).
+  The layers are drawn as a fanned deck of panes; the product's layer rises out of the deck with its
+  regions highlighted, and the layers above it fade.
+  Usage in a post: {{< makeup-product-map >}}
+  Data is copied from the BATS and MAKEUP_PRODUCTS tables in makeup.md; update both together.
+  Face and layer drawings come from assets/js/makeup-face.js (shared with makeup-layers.html).
+*/ -}}
+<style>
+  .pm-root {
+    --pm-surface: #0d9488;
+    --pm-salience: #7c3aed;
+    --pm-geometry: #ea580c;
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+  }
+  :root[data-theme="dark"] .pm-root { --pm-surface: #2dd4bf; --pm-salience: #a78bfa; --pm-geometry: #fb923c; }
+  .pm-picker { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-bottom: 10px; }
+  .pm-root button {
+    font: inherit; font-size: 13px; cursor: pointer; color: var(--primary); background: var(--entry);
+    border: 1.5px solid var(--tertiary); border-radius: 999px; padding: 4px 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .pm-root button[aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); font-weight: 700; }
+  .pm-root svg { display: block; width: 100%; height: auto; }
+  .pm-root svg text { fill: var(--primary); font-size: 11px; }
+  .pm-head { font-size: 11px !important; font-weight: 700; fill: var(--secondary) !important; letter-spacing: 0.04em; }
+  .pm-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .pm-note { fill: var(--secondary) !important; font-size: 10.5px !important; }
+  .pm-bat rect { fill: var(--c); fill-opacity: 0.14; stroke: var(--c); stroke-width: 1.4; }
+  .pm-bat .pm-family { fill: var(--c) !important; font-size: 9.5px; font-weight: 700; }
+  .pm-link { fill: none; stroke: var(--c); stroke-width: 1.4; opacity: 0.85; }
+  .pm-dot { fill: var(--c); }
+  .pm-region { fill: transparent; stroke: none; }
+  .pm-region.on { fill: var(--c); fill-opacity: 0.45; stroke: var(--c); stroke-width: 1.2; }
+  .pm-region.skin.on { fill-opacity: 0.22; }
+  .pm-pane-box { fill: var(--entry); fill-opacity: 0.55; stroke: var(--secondary); stroke-width: 1; }
+  .pm-pane.on .pm-pane-box { fill-opacity: 0.94; stroke: var(--primary); stroke-width: 2.2; }
+  .pm-pane { transition: transform .55s cubic-bezier(.5, 0, .2, 1), opacity .35s ease; }
+  .pm-pane.above { opacity: 0.22; }
+  .pm-num circle { fill: var(--entry); stroke: var(--secondary); stroke-width: 1; }
+  .pm-num text { fill: var(--secondary) !important; font-size: 10px !important; font-weight: 700; }
+  .pm-tag rect { fill: var(--primary); }
+  .pm-tag text { fill: var(--theme) !important; font-weight: 700; }
+  .pm-root .ml-ghost { color: var(--secondary); opacity: 0.55; }
+  .pm-root .ml-mist { opacity: 0.8; }
+  .pm-links { transition: opacity .3s ease .45s; }
+  .pm-caption { text-align: center; font-size: 15px; color: var(--primary); margin: 8px auto 0; max-width: 720px; }
+  .pm-caption code { font-size: 13px; }
+  .pm-legend { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--secondary); margin-top: 6px; }
+  .pm-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  @media (prefers-reduced-motion: reduce) { .pm-pane, .pm-links { transition: none; } }
+</style>
+
+{{- /* Shared face drawing. Included by every makeup diagram; the browser fetches it once. */ -}}
+{{- $faceJS := resources.Get "js/makeup-face.js" | minify | fingerprint }}
+<script src="{{ $faceJS.RelPermalink }}" integrity="{{ $faceJS.Data.Integrity }}"></script>
+
+<div class="pm-root">
+  <div class="pm-picker" role="group" aria-label="Makeup products"></div>
+  <svg viewBox="0 0 910 410" role="img" aria-label="The selected product's BATs, and its layer lifted out of the stack of makeup layers with its face regions highlighted"></svg>
+  <p class="pm-caption" aria-live="polite"></p>
+  <div class="pm-legend">
+    <span><i style="background: var(--pm-surface)"></i>SURFACE_HEALTH</span>
+    <span><i style="background: var(--pm-salience)"></i>FEATURE_SALIENCE</span>
+    <span><i style="background: var(--pm-geometry)"></i>GEOMETRY_PROPORTION</span>
+  </div>
+</div>
+
+<script>
+  (() => {
+    // ---- Data (from the BATS and MAKEUP_PRODUCTS tables): edit here ------------
+    const LAYER_NAMES = ['PREP', 'COMPLEXION_BASE', 'LOCAL_CORRECTION', 'FACE_DIMENSION_COLOR', 'FEATURE_MAKEUP', 'FINISH_SET'];
+    const BATS = {
+      EVEN_SKIN_TONE:             { family: 'SURFACE_HEALTH',      regions: ['GENERAL_FACE_SKIN'] },
+      SMOOTH_LOOKING_SKIN:        { family: 'SURFACE_HEALTH',      regions: ['GENERAL_FACE_SKIN'] },
+      HEALTHY_CHEEK_FLUSH:        { family: 'SURFACE_HEALTH',      regions: ['CHEEKS'] },
+      REDUCED_UNDER_EYE_DARKNESS: { family: 'SURFACE_HEALTH',      regions: ['UNDER_EYES'] },
+      PROMINENT_EYES:             { family: 'FEATURE_SALIENCE',    regions: ['EYES_EYELIDS', 'LASHES'] },
+      VISIBLE_LASHES:             { family: 'FEATURE_SALIENCE',    regions: ['LASHES'] },
+      PROMINENT_LIPS:             { family: 'FEATURE_SALIENCE',    regions: ['LIPS'] },
+      PROMINENT_CHEEKBONES:       { family: 'GEOMETRY_PROPORTION', regions: ['CHEEKS'] },
+      NARROWER_DEFINED_NOSE:      { family: 'GEOMETRY_PROPORTION', regions: ['NOSE'] },
+      DEFINED_JAW:                { family: 'GEOMETRY_PROPORTION', regions: ['JAW', 'CHIN'] },
+    };
+    const PRODUCTS = [
+      { name: 'FOUNDATION', description: 'Broadly evens facial skin appearance', bats: ['EVEN_SKIN_TONE', 'SMOOTH_LOOKING_SKIN'], layers: ['COMPLEXION_BASE'], appearance: ['COLOR', 'OPACITY', 'FINISH'], structure: [] },
+      { name: 'CONCEALER', description: 'Locally hides discoloration or darkness', bats: ['EVEN_SKIN_TONE', 'REDUCED_UNDER_EYE_DARKNESS'], layers: ['LOCAL_CORRECTION'], appearance: ['COLOR', 'OPACITY'], structure: [] },
+      { name: 'BRONZER', description: 'Adds warmer/darker coloration to selected facial regions', bats: ['EVEN_SKIN_TONE'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
+      { name: 'CONTOUR', description: 'Adds strategic darkness to alter apparent facial geometry', bats: ['PROMINENT_CHEEKBONES', 'NARROWER_DEFINED_NOSE', 'DEFINED_JAW'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
+      { name: 'BLUSH', description: 'Adds reddish/pink coloration to cheeks', bats: ['HEALTHY_CHEEK_FLUSH'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
+      { name: 'MASCARA', description: 'Darkens and alters eyelashes', bats: ['VISIBLE_LASHES', 'PROMINENT_EYES'], layers: ['FEATURE_MAKEUP'], appearance: ['COLOR'], structure: ['THICKNESS', 'LENGTH', 'ORIENTATION'] },
+      { name: 'LIPSTICK', description: 'Changes lip coloration and prominence', bats: ['PROMINENT_LIPS'], layers: ['FEATURE_MAKEUP'], appearance: ['COLOR', 'OPACITY', 'FINISH'], structure: [] },
+    ];
+    // ----------------------------------------------------------------------------
+
+    const FAMILY_COLOR = { SURFACE_HEALTH: 'var(--pm-surface)', FEATURE_SALIENCE: 'var(--pm-salience)', GEOMETRY_PROPORTION: 'var(--pm-geometry)' };
+    const { FACE, LIPS, LAYERS: ART, GHOST } = window.MakeupFace; // ART[0] is bare skin, ART[i] is layer i
+    const MIRROR = 'translate(200 0) scale(-1 1)';
+
+    // Region shapes (same as face-regions.html). Paired regions are drawn on the left and mirrored.
+    // anchor: where BAT links land (left side of the face, since the BATs are to the left)
+    const REGIONS = {
+      GENERAL_FACE_SKIN: { d: FACE, skin: true, anchor: [62, 86] },
+      CHEEKS:       { paired: true, d: 'M42 134 Q58 132 80 142 Q87 158 82 172 Q64 178 49 168 Q42 152 42 134 Z', anchor: [60, 156] },
+      JAW:          { paired: true, d: 'M40 150 C44 176, 60 196, 82 206 L84 197 C66 189, 53 173, 50 150 Z', anchor: [50, 176] },
+      UNDER_EYES:   { paired: true, d: 'M60 123 Q76 133 92 123 Q90 136 77 141 Q64 137 60 123 Z', anchor: [70, 132] },
+      EYES_EYELIDS: { paired: true, d: 'M56 118 Q74 100 96 114 Q78 128 56 118 Z', anchor: [62, 117] },
+      LASHES:       { paired: true, d: 'M58 118 Q76 104 94 118 Q76 110 58 118 Z', anchor: [74, 108] },
+      NOSE:         { d: 'M94 110 Q97 122 96 134 Q90 144 88 152 Q93 161 100 160 Q107 161 112 152 Q110 144 104 134 Q103 122 106 110 Z', anchor: [95, 140] },
+      LIPS:         { d: LIPS, anchor: [86, 183] },
+      CHIN:         { d: 'M84 199 Q100 205 116 199 L118 207 C110 212 105 213.5 100 214 C95 213.5 90 212 82 207 Z', anchor: [92, 207] },
+    };
+
+    // Layout: the layers are a fanned deck of panes seen at an angle (bare skin at the back-left,
+    // FINISH_SET at the front-right). Each pane maps the 200 x 260 face canvas through a slant, so
+    // points on it can be computed exactly for the BAT links.
+    const SX = 0.52, SK = -0.17;             // horizontal squash and vertical slant of each pane
+    const STEP = 77, TX0 = 334, TY0 = 122;   // spacing between panes, position of the back pane
+    const LIFT = 56;                        // how far the product's layer rises out of the deck
+    const BAT_X = 16, BAT_W = 256;
+    const paneOrigin = (i) => [TX0 + i * STEP, TY0];
+    const onPane = (i, [x, y], lifted) => { const [tx, ty] = paneOrigin(i); return [tx + SX * x, ty + SK * x + y - (lifted ? LIFT : 0)]; };
+
+    const root = document.currentScript.previousElementSibling;
+    const svg = root.querySelector('svg');
+    const NS = 'http://www.w3.org/2000/svg';
+    const uid = 'pm' + Math.random().toString(36).slice(2, 8);
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const el = (tag, attrs = {}, parent = svg) => {
+      const e = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      parent.appendChild(e);
+      return e;
+    };
+    const text = (x, y, str, attrs = {}, parent = svg) => { const t = el('text', { x, y, ...attrs }, parent); t.textContent = str; return t; };
+
+    text(BAT_X, 22, 'BATS  (why)', { class: 'pm-head' });
+    text(TX0 + 3 * STEP + SX * 100, 404, 'LAYERS  (when)  +  FACE_REGIONS  (where)', { class: 'pm-head', 'text-anchor': 'middle' });
+
+    // Panes, back to front. Pane 0 is bare skin; pane i is layer i.
+    const panes = ART.map((layer, i) => {
+      const [tx, ty] = paneOrigin(i);
+      const g = el('g', { class: 'pm-pane' });
+      const inner = el('g', { transform: `translate(${tx} ${ty}) matrix(${SX} ${SK} 0 1 0 0)` }, g);
+      el('rect', { class: 'pm-pane-box', x: 0, y: 0, width: 200, height: 262, rx: 10 }, inner);
+      const art = el('g', {}, inner);
+      art.innerHTML = (i ? GHOST : '') + layer.draw(`${uid}-p${i}-`);
+      const regions = el('g', {}, inner);
+      // Number badge above the pane's top edge
+      const [nx, ny] = onPane(i, [100, 0]);
+      const num = el('g', { class: 'pm-num' }, g);
+      el('circle', { cx: nx, cy: ny - 14, r: 9 }, num);
+      text(nx, ny - 10.5, i ? String(i) : '0', { 'text-anchor': 'middle' }, num);
+      return { g, regions, num, top: [nx, ny] };
+    });
+
+    // Name tag for the lifted layer
+    const tag = el('g', { class: 'pm-tag' });
+    const tagRect = el('rect', { height: 22, rx: 11 }, tag);
+    const tagText = text(0, 0, '', { class: 'pm-mono', 'text-anchor': 'middle' }, tag);
+
+    // BAT cards and links to the regions on the lifted pane
+    const batLayer = el('g');
+    const links = el('g', { class: 'pm-links' });
+    const caption = root.querySelector('.pm-caption');
+    let buttons = [];
+
+    function show(product) {
+      const k = LAYER_NAMES.indexOf(product.layers[0]) + 1; // pane index of the product's layer
+
+      panes.forEach((p, i) => {
+        p.g.classList.toggle('on', i === k);
+        p.g.classList.toggle('above', i > k);
+        p.g.style.transform = `translate(0px, ${i === k ? -LIFT : 0}px)`;
+        p.num.style.visibility = i === k ? 'hidden' : '';
+        p.regions.replaceChildren();
+      });
+
+      const [tx, ty] = panes[k].top;
+      tagText.textContent = `${k} · ${product.layers[0]}`;
+      tagText.setAttribute('x', tx);
+      tagText.setAttribute('y', ty - LIFT - 10);
+      const w = tagText.getComputedTextLength() + 24;
+      tagRect.setAttribute('x', tx - w / 2);
+      tagRect.setAttribute('y', ty - LIFT - 25);
+      tagRect.setAttribute('width', w);
+
+      batLayer.replaceChildren();
+      links.replaceChildren();
+      const n = product.bats.length, H = 50, GAP = 16;
+      const top = 230 - (n * H + (n - 1) * GAP) / 2;
+      product.bats.forEach((batName, i) => {
+        const bat = BATS[batName], color = FAMILY_COLOR[bat.family];
+        const y = top + i * (H + GAP), cy = y + H / 2;
+        const g = el('g', { class: 'pm-bat', style: `--c: ${color}` }, batLayer);
+        el('rect', { x: BAT_X, y, width: BAT_W, height: H, rx: 8 }, g);
+        text(BAT_X + 14, y + 21, batName, { class: 'pm-mono', 'font-weight': 700 }, g);
+        text(BAT_X + 14, y + 37, `FACE_REGIONS [${bat.regions.join(', ')}]`, { class: 'pm-family pm-mono' }, g);
+        bat.regions.forEach((regionName) => {
+          const r = REGIONS[regionName];
+          const shapes = [el('path', { d: r.d, class: 'pm-region on' + (r.skin ? ' skin' : ''), style: `--c: ${color}` }, panes[k].regions)];
+          if (r.paired) shapes.push(el('path', { d: r.d, class: 'pm-region on', style: `--c: ${color}`, transform: MIRROR }, panes[k].regions));
+          const [ax, ay] = onPane(k, r.anchor, true), x0 = BAT_X + BAT_W;
+          el('path', { class: 'pm-link', style: `--c: ${color}`, d: `M${x0} ${cy} C ${x0 + 50} ${cy}, ${ax - 50} ${ay}, ${ax} ${ay}` }, links);
+          el('circle', { class: 'pm-dot', style: `--c: ${color}`, cx: ax, cy: ay, r: 2.6 }, links);
+        });
+      });
+
+      // Links appear once the pane has finished rising
+      if (!reduceMotion) {
+        links.style.transition = 'none';
+        links.style.opacity = 0;
+        links.getBoundingClientRect();
+        links.style.transition = '';
+      }
+      links.style.opacity = 1;
+
+      const list = (xs) => (xs.length ? xs.map((x) => `<code>${x}</code>`).join(' ') : '<code>[]</code>');
+      caption.innerHTML = `<strong>${product.name}</strong>: ${product.description}.<br>` +
+        `Appearance changes ${list(product.appearance)} · Structure changes ${list(product.structure)}`;
+      buttons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.name === product.name)));
+    }
+
+    buttons = PRODUCTS.map((p) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.name = p.name;
+      b.textContent = p.name;
+      b.addEventListener('click', () => show(p));
+      root.querySelector('.pm-picker').appendChild(b);
+      return b;
+    });
+
+    show(PRODUCTS[0]);
+  })();
+</script>

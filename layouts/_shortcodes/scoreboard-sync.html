@@ -1,0 +1,270 @@
+{{- /*
+  Animation: the TV score bug and the field scoreboard show the same game state.
+  Steps 1-4 match up score, inning, count and outs; step 5 shows what only one board has;
+  step 6 plays a few pitches and both boards update together.
+  Usage in a post: {{< scoreboard-sync >}}
+*/ -}}
+<style>
+  .sb-root {
+    --sb-hi: #f59e0b;
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+  }
+  .sb-root svg { display: block; width: 100%; max-width: 900px; height: auto; margin: 0 auto; border-radius: 10px; background: var(--code-bg); }
+  .sb-root svg text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .sb-hi { fill: var(--sb-hi); fill-opacity: 0.14; stroke: var(--sb-hi); stroke-width: 3; }
+  .sb-link { fill: none; stroke: var(--sb-hi); stroke-width: 2; stroke-dasharray: 5 4; }
+  .sb-chip rect { fill: var(--sb-hi); }
+  .sb-chip text { fill: #1c1917; font-size: 13px; font-weight: 700; }
+  .sb-steps { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 12px 0 6px; }
+  .sb-root button {
+    font: inherit; font-size: 14px; cursor: pointer; color: var(--primary); background: var(--entry);
+    border: 1px solid var(--tertiary); border-radius: 999px; padding: 4px 14px;
+  }
+  .sb-steps button { position: relative; overflow: hidden; }
+  .sb-steps button[aria-current="step"] { border-color: var(--primary); font-weight: 600; }
+  .sb-steps .sb-bar { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: var(--primary); opacity: .6; }
+  .sb-caption { text-align: center; font-size: 15px; color: var(--primary); min-height: 3em; margin: 6px auto 0; max-width: 680px; }
+  .sb-controls { display: flex; justify-content: center; margin-top: 4px; }
+</style>
+
+<div class="sb-root">
+  <svg viewBox="0 0 900 420" role="img" aria-label="A TV score bug and a field scoreboard, showing which parts of each display the same game state"></svg>
+  <div class="sb-steps"></div>
+  <p class="sb-caption" aria-live="polite"></p>
+  <div class="sb-controls"><button type="button" data-sb-play>Play</button></div>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const svg = root.querySelector('svg');
+    const NS = 'http://www.w3.org/2000/svg';
+    const el = (tag, attrs = {}, parent = svg) => {
+      const e = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      parent.appendChild(e);
+      return e;
+    };
+    const text = (x, y, str, attrs = {}, parent = svg) => { const t = el('text', { x, y, ...attrs }, parent); t.textContent = str; return t; };
+
+    // ---- Game state shown on both boards ----------------------------------------
+    const START = {
+      away: [0, 1, 0, 0, 2, 0, 0, null, null],   // runs by inning (null = not played yet)
+      home: [1, 0, 0, 0, 1, 0, null, null, null],
+      top: true, inning: 7, balls: 2, strikes: 1, outs: 1,
+      bases: [true, false, true],                 // 1st, 2nd, 3rd
+      hits: [7, 5], errors: [0, 1],
+    };
+    // Step 6: a few pitches. at = fraction of the step's duration.
+    const EVENTS = [
+      { at: 0.1, text: 'Pitch: ball', flash: ['count'], apply: (s) => { s.balls = 3; } },
+      { at: 0.28, text: 'Pitch: foul ball', flash: ['count'], apply: (s) => { s.strikes = 2; } },
+      { at: 0.48, text: 'Home run! 3 runs score', flash: ['score', 'bases', 'count'],
+        apply: (s) => { s.away[6] += 3; s.hits[0] += 1; s.bases = [false, false, false]; s.balls = 0; s.strikes = 0; } },
+      { at: 0.74, text: 'Next batter: fly out', flash: ['outs', 'count'], apply: (s) => { s.outs = 2; s.balls = 0; s.strikes = 0; } },
+    ];
+    const total = (runs) => runs.reduce((a, r) => a + (r ?? 0), 0);
+
+    // ---- TV score bug -------------------------------------------------------------
+    const TVX = 255, TVY = 36, TVH = 56;
+    el('rect', { x: TVX, y: TVY, width: 390, height: TVH, rx: 6, fill: '#0f172a' });
+    const tv = {};
+    [['AWAY', '#c2410c'], ['HOME', '#1d4ed8']].forEach(([name, color], i) => {
+      const y = TVY + i * 28;
+      el('rect', { x: TVX, y, width: 6, height: 28, fill: color, rx: i ? 0 : 0 });
+      text(TVX + 16, y + 20, name, { fill: '#e2e8f0', 'font-size': 15, 'font-weight': 700 });
+      tv['runs' + i] = text(TVX + 138, y + 21, '', { fill: '#fff', 'font-size': 18, 'font-weight': 700, 'text-anchor': 'end' });
+    });
+    el('line', { x1: TVX + 150, y1: TVY + 6, x2: TVX + 150, y2: TVY + TVH - 6, stroke: '#334155' });
+    tv.half = text(TVX + 175, TVY + 22, '', { fill: '#fbbf24', 'font-size': 14, 'text-anchor': 'middle' });
+    tv.inning = text(TVX + 175, TVY + 46, '', { fill: '#fff', 'font-size': 20, 'font-weight': 700, 'text-anchor': 'middle' });
+    tv.bases = [[TVX + 250, TVY + 34], [TVX + 235, TVY + 19], [TVX + 220, TVY + 34]].map(([cx, cy]) =>
+      el('rect', { x: cx - 7, y: cy - 7, width: 14, height: 14, transform: `rotate(45 ${cx} ${cy})`, stroke: '#94a3b8', 'stroke-width': 1.5 }));
+    tv.count = text(TVX + 300, TVY + 36, '', { fill: '#fff', 'font-size': 20, 'font-weight': 700, 'text-anchor': 'middle' });
+    tv.outs = [0, 1].map((i) => el('circle', { cx: TVX + 350 + i * 20, cy: TVY + 28, r: 6, stroke: '#94a3b8', 'stroke-width': 1.5 }));
+    text(TVX + 360, TVY + 50, 'OUT', { fill: '#94a3b8', 'font-size': 10, 'text-anchor': 'middle' });
+
+    // ---- Field scoreboard ---------------------------------------------------------
+    const BX = 110, BY = 190, BW = 680, BH = 205;
+    const colX = (i) => 220 + i * 44, rheX = (j) => 640 + j * 44, ROW_Y = [252, 290];
+    el('rect', { x: BX, y: BY, width: BW, height: BH, rx: 8, fill: '#1f4d2e', stroke: '#14532d', 'stroke-width': 4 });
+    const white = { fill: '#f8fafc', 'font-size': 14, 'font-weight': 700 };
+    text(BX + 16, 214, 'INNING', white);
+    for (let i = 0; i < 9; i++) text(colX(i) + 22, 214, String(i + 1), { ...white, 'text-anchor': 'middle' });
+    ['R', 'H', 'E'].forEach((h, j) => text(rheX(j) + 22, 214, h, { ...white, 'text-anchor': 'middle' }));
+    const field = { cells: [[], []], rhe: [[], []], batting: [] };
+    ['AWAY', 'HOME'].forEach((name, r) => {
+      field.batting.push(el('circle', { cx: 130, cy: ROW_Y[r] - 7, r: 5, stroke: '#0f2a1a', 'stroke-width': 1 }));
+      text(142, ROW_Y[r], name, { ...white, 'font-size': 16 });
+      for (let i = 0; i < 9; i++) {
+        el('rect', { x: colX(i) + 4, y: ROW_Y[r] - 24, width: 36, height: 32, rx: 3, fill: '#0f2a1a' });
+        field.cells[r].push(text(colX(i) + 22, ROW_Y[r], '', { fill: '#fde047', 'font-size': 22, 'font-weight': 700, 'text-anchor': 'middle' }));
+      }
+      for (let j = 0; j < 3; j++) {
+        el('rect', { x: rheX(j) + 4, y: ROW_Y[r] - 24, width: 36, height: 32, rx: 3, fill: '#0f2a1a' });
+        field.rhe[r].push(text(rheX(j) + 22, ROW_Y[r], '', { fill: '#fde047', 'font-size': 22, 'font-weight': 700, 'text-anchor': 'middle' }));
+      }
+    });
+    const lights = (label, lx, xs, onColor) => {
+      text(lx, 360, label, white);
+      return xs.map((cx) => ({ node: el('circle', { cx, cy: 355, r: 8, stroke: '#0f2a1a', 'stroke-width': 1.5 }), onColor }));
+    };
+    field.ball = lights('BALL', 136, [196, 218, 240], '#4ade80');
+    field.strike = lights('STRIKE', 280, [356, 378], '#f87171');
+    field.out = lights('OUT', 436, [484, 506], '#f87171');
+
+    // ---- Which parts of each board show each piece of state ----------------------
+    const TARGETS = {
+      score:   { tv: [TVX + 100, TVY, 50, TVH], field: [[640, 226, 44, 72]], chip: 'score' },
+      inning:  { tv: [TVX + 150, TVY, 50, TVH], field: [[colX(6), 194, 44, 104], [120, 0, 20, 20]], chip: 'inning (▲ top / ▼ bottom)' },
+      count:   { tv: [TVX + 270, TVY, 60, TVH], field: [[126, 338, 262, 34]], chip: 'balls, strikes' },
+      outs:    { tv: [TVX + 330, TVY, 60, TVH], field: [[428, 338, 92, 34]], chip: 'outs' },
+      bases:   { tv: [TVX + 200, TVY, 70, TVH], field: [], chip: 'bases → Baseball II' },
+      stats:   { tv: null, field: [[684, 194, 88, 104]], chip: 'hits, errors: stats, not state' },
+    };
+
+    const STEPS = [
+      { name: 'Score', seconds: 3.2, show: ['score'], caption: 'The score. The TV shows only the totals; the field board also breaks the runs down by inning.' },
+      { name: 'Inning', seconds: 3.2, show: ['inning'], caption: 'The inning and which half. ▲ is the top (away team bats), ▼ the bottom. The field board lights the current inning’s column and the batting team.' },
+      { name: 'Count', seconds: 3.2, show: ['count'], caption: 'The count. The field board uses lights: up to 3 balls and 2 strikes, since the next one ends the plate appearance.' },
+      { name: 'Outs', seconds: 3.2, show: ['outs'], caption: 'Outs this half inning. Only 2 lights, because the third out ends the half inning.' },
+      { name: 'Only one', seconds: 4, show: ['bases', 'stats'], caption: 'Only on TV: runners on base (that’s Baseball II). Only on the field board: hits and errors, which are stats, not part of the game’s state.' },
+      { name: 'Live', seconds: 7, show: [], caption: 'A few pitches later: both boards change together, because they show the same state.' },
+    ];
+    let acc = 0;
+    STEPS.forEach((s) => { s.start = acc; acc += s.seconds; });
+    const TOTAL = acc;
+
+    const hiLayer = el('g');
+    const eventChip = el('g', { class: 'sb-chip' });
+    const eventRect = el('rect', { height: 26, rx: 13 }, eventChip);
+    const eventText = text(450, 150, '', { 'text-anchor': 'middle' }, eventChip);
+
+    function paint(s, battingRow) {
+      tv.runs0.textContent = total(s.away);
+      tv.runs1.textContent = total(s.home);
+      tv.half.textContent = s.top ? '▲' : '▼';
+      tv.inning.textContent = s.inning;
+      tv.bases.forEach((b, i) => b.setAttribute('fill', s.bases[i] ? '#fbbf24' : '#1e293b'));
+      tv.count.textContent = `${s.balls}-${s.strikes}`;
+      tv.outs.forEach((o, i) => o.setAttribute('fill', i < s.outs ? '#fbbf24' : '#1e293b'));
+      [s.away, s.home].forEach((runs, r) => {
+        runs.forEach((v, i) => (field.cells[r][i].textContent = v ?? ''));
+        field.rhe[r][0].textContent = total(runs);
+        field.rhe[r][1].textContent = s.hits[r];
+        field.rhe[r][2].textContent = s.errors[r];
+        field.batting[r].setAttribute('fill', r === battingRow ? '#fde047' : '#0f2a1a');
+      });
+      const set = (ls, n) => ls.forEach((l, i) => l.node.setAttribute('fill', i < n ? l.onColor : '#0f2a1a'));
+      set(field.ball, s.balls); set(field.strike, s.strikes); set(field.out, s.outs);
+    }
+
+    function highlight(names, withLinks) {
+      hiLayer.replaceChildren();
+      names.forEach((name) => {
+        const t = TARGETS[name];
+        const rects = t.field.map((r) => (r[1] === 0 ? [r[0], ROW_Y[0] - 17, r[2], r[3]] : r)); // batting light follows the away row
+        if (t.tv) el('rect', { class: 'sb-hi', x: t.tv[0] + 2, y: t.tv[1] + 2, width: t.tv[2] - 4, height: t.tv[3] - 4, rx: 5 }, hiLayer);
+        rects.forEach((r) => el('rect', { class: 'sb-hi', x: r[0], y: r[1], width: r[2], height: r[3], rx: 6 }, hiLayer));
+        if (!withLinks) return;
+        // Link from the TV part down to the field part, with the state variable's name on it
+        const from = t.tv ? [t.tv[0] + t.tv[2] / 2, t.tv[1] + t.tv[3] + 2] : null;
+        const to = rects.length ? [rects[0][0] + rects[0][2] / 2, rects[0][1] - 2] : null;
+        const chipAt = from && to ? [(from[0] + to[0]) / 2, 146] : from ? [from[0], 146] : [to[0], 164];
+        if (from && to) el('path', { class: 'sb-link', d: `M${from[0]} ${from[1]} C ${from[0]} ${from[1] + 50}, ${to[0]} ${to[1] - 50}, ${to[0]} ${to[1]}` }, hiLayer);
+        else if (from) el('path', { class: 'sb-link', d: `M${from[0]} ${from[1]} V ${chipAt[1] - 12}` }, hiLayer);
+        else el('path', { class: 'sb-link', d: `M${to[0]} ${chipAt[1] + 12} V ${to[1]}` }, hiLayer);
+        const chip = el('g', { class: 'sb-chip' }, hiLayer);
+        const tr = el('rect', { height: 24, rx: 12 }, chip);
+        const tt = text(chipAt[0], chipAt[1] + 5, t.chip, { 'text-anchor': 'middle' }, chip);
+        const w = tt.getComputedTextLength() + 20;
+        tr.setAttribute('x', chipAt[0] - w / 2); tr.setAttribute('y', chipAt[1] - 12); tr.setAttribute('width', w);
+      });
+    }
+
+    // ---- Timeline -----------------------------------------------------------------
+    const caption = root.querySelector('.sb-caption');
+    const playBtn = root.querySelector('[data-sb-play]');
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const stepBtns = STEPS.map((s, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.innerHTML = `${i + 1}. ${s.name}<span class="sb-bar"></span>`;
+      b.addEventListener('click', () => {
+        if (reduceMotion) { t = s.start + s.seconds - 0.001; renderAt(t); }
+        else { t = s.start; play(); }
+      });
+      root.querySelector('.sb-steps').appendChild(b);
+      return b;
+    });
+
+    let t = 0, playing = false, last = null, frame = null, lastKey = '';
+    function renderAt(time) {
+      let i = STEPS.findIndex((s) => time < s.start + s.seconds);
+      if (i === -1) i = STEPS.length - 1;
+      const step = STEPS[i], p = Math.min(1, (time - step.start) / step.seconds);
+      const state = structuredClone(START);
+      let flash = [], eventLabel = '';
+      if (step.name === 'Live') {
+        EVENTS.forEach((e) => {
+          if (p < e.at) return;
+          e.apply(state);
+          eventLabel = e.text;
+          if (p - e.at < 0.12) flash = e.flash;
+        });
+      }
+      paint(state, state.top ? 0 : 1);
+      const key = `${i}|${flash.join()}|${eventLabel}`;
+      if (key !== lastKey) {
+        highlight(step.name === 'Live' ? flash : step.show, step.name !== 'Live');
+        eventText.textContent = eventLabel;
+        eventChip.style.display = eventLabel ? '' : 'none';
+        if (eventLabel) {
+          const w = eventText.getComputedTextLength() + 24;
+          eventRect.setAttribute('x', 450 - w / 2); eventRect.setAttribute('y', 132); eventRect.setAttribute('width', w);
+        }
+        caption.textContent = step.caption;
+        stepBtns.forEach((b, k) => (k === i ? b.setAttribute('aria-current', 'step') : b.removeAttribute('aria-current')));
+        lastKey = key;
+      }
+      stepBtns.forEach((b, k) => {
+        const s = STEPS[k];
+        b.querySelector('.sb-bar').style.width = `${100 * Math.max(0, Math.min(1, (time - s.start) / s.seconds))}%`;
+      });
+    }
+
+    function tick(now) {
+      if (last !== null) t = Math.min(TOTAL, t + (now - last) / 1000);
+      last = now;
+      renderAt(t);
+      if (t >= TOTAL) return stop();
+      frame = requestAnimationFrame(tick);
+    }
+    function play() {
+      if (t >= TOTAL) t = 0;
+      playing = true; last = null;
+      playBtn.textContent = 'Pause';
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
+    }
+    function stop() {
+      playing = false;
+      cancelAnimationFrame(frame);
+      playBtn.textContent = t >= TOTAL ? 'Replay' : 'Play';
+    }
+    playBtn.addEventListener('click', () => (playing ? stop() : play()));
+
+    if (reduceMotion) {
+      playBtn.hidden = true;
+      renderAt(0);
+    } else {
+      renderAt(0);
+      const io = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) { io.disconnect(); play(); }
+      }, { threshold: 0.5 });
+      io.observe(svg);
+    }
+  })();
+</script>

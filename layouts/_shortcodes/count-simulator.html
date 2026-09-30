@@ -1,0 +1,243 @@
+{{- /*
+  Interactive odometer of the game state. Add balls, strikes, outs and runs; each wheel rolls over
+  into the one on its right, like an odometer: count → outs → half inning → inning → game over.
+  Rules match the Python code in baseball.md.
+  Usage in a post: {{< count-simulator >}}
+*/ -}}
+<style>
+  .odo-root {
+    --odo-h: 62px;          /* height of one digit on a wheel */
+    --odo-w: 46px;
+    width: min(760px, 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+  }
+  @media (max-width: 640px) { .odo-root { --odo-h: 44px; --odo-w: 32px; } }
+  .odo-housing {
+    background: linear-gradient(180deg, #4a4e55 0%, #2a2d31 45%, #1b1d20 100%);
+    border-radius: 16px; padding: 18px 18px 14px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.18), inset 0 -2px 0 rgba(0,0,0,.5), 0 10px 24px rgba(0,0,0,.28);
+  }
+  .odo-row { display: flex; justify-content: center; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+  .odo-group { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .odo-wheels {
+    display: flex; gap: 3px; padding: 5px; border-radius: 8px;
+    background: #0b0c0d; box-shadow: inset 0 2px 6px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.12);
+  }
+  .odo-wheel { position: relative; width: var(--odo-w); height: var(--odo-h); overflow: hidden; border-radius: 4px; background: #16181b; }
+  .odo-wheel::after { /* cylinder shading */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(180deg, rgba(0,0,0,.75) 0%, rgba(0,0,0,0) 32%, rgba(255,255,255,.05) 50%, rgba(0,0,0,0) 68%, rgba(0,0,0,.75) 100%);
+  }
+  .odo-strip { transition: transform .45s cubic-bezier(.5, 0, .25, 1.15); }
+  .odo-strip.snap { transition: none; }
+  .odo-strip span {
+    display: block; height: var(--odo-h); line-height: var(--odo-h); text-align: center;
+    font: 700 calc(var(--odo-h) * .62) / var(--odo-h) ui-monospace, SFMono-Regular, Menlo, monospace; color: #f4f1e8;
+  }
+  .odo-wheel.balls span { color: #4ade80; }
+  .odo-wheel.strikes span { color: #f87171; }
+  .odo-wheel.outs span { color: #fbbf24; }
+  .odo-plate {
+    font: 700 10.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; color: #d6d3cb;
+    background: linear-gradient(180deg, #5b5f66, #3b3e43); padding: 4px 8px; border-radius: 3px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
+  }
+  .odo-sep { width: 2px; align-self: stretch; margin: 0 2px 22px; background: linear-gradient(180deg, transparent, rgba(255,255,255,.18), transparent); }
+  .odo-carry { font: 700 12px/1 ui-monospace, monospace; color: #6b6f76; margin-bottom: calc(var(--odo-h) / 2 + 22px); transition: color .2s; }
+  .odo-carry.lit { color: #fbbf24; text-shadow: 0 0 8px rgba(251, 191, 36, .8); }
+  .odo-ticker {
+    margin-top: 14px; background: #0b0c0d; border-radius: 6px; padding: 9px 12px; min-height: 1.5em;
+    font: 600 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #fbbf24;
+    text-shadow: 0 0 6px rgba(251, 191, 36, .55); box-shadow: inset 0 2px 5px rgba(0,0,0,.9);
+  }
+  .odo-ticker.over { color: #fde047; }
+  .odo-history { list-style: none; margin: 8px 2px 0; padding: 0; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b8f96; max-height: 5.4em; overflow: hidden; }
+  .odo-history li { margin: 0; }
+  .odo-keys { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin-top: 14px; }
+  .odo-root button {
+    font: 700 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; cursor: pointer;
+    color: #1b1d20; background: linear-gradient(180deg, #f3f1ea, #cfcbc0); border: 0; border-radius: 8px; padding: 11px 14px;
+    box-shadow: 0 4px 0 #8f8b80, 0 5px 8px rgba(0,0,0,.25); transition: transform .06s, box-shadow .06s;
+  }
+  .odo-root button:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 #8f8b80, 0 2px 4px rgba(0,0,0,.25); }
+  .odo-root button:disabled { opacity: .4; cursor: default; }
+  .odo-root button.minor { background: linear-gradient(180deg, #6b6f76, #4a4e55); color: #e8e6df; box-shadow: 0 4px 0 #2a2d31, 0 5px 8px rgba(0,0,0,.25); }
+  @media (prefers-reduced-motion: reduce) { .odo-strip { transition: none; } }
+</style>
+
+<div class="odo-root">
+  <div class="odo-housing">
+    <div class="odo-row">
+      <div class="odo-group"><div class="odo-wheels" data-w="balls"></div><span class="odo-plate">BALLS</span></div>
+      <div class="odo-group"><div class="odo-wheels" data-w="strikes"></div><span class="odo-plate">STRIKES</span></div>
+      <span class="odo-carry" data-carry="pa">▶</span>
+      <div class="odo-group"><div class="odo-wheels" data-w="outs"></div><span class="odo-plate">OUTS</span></div>
+      <span class="odo-carry" data-carry="half">▶</span>
+      <div class="odo-group"><div class="odo-wheels" data-w="half"></div><span class="odo-plate">HALF</span></div>
+      <span class="odo-carry" data-carry="game">▶</span>
+      <div class="odo-group"><div class="odo-wheels" data-w="inning"></div><span class="odo-plate">INNING</span></div>
+      <div class="odo-sep"></div>
+      <div class="odo-group"><div class="odo-wheels" data-w="away"></div><span class="odo-plate">AWAY</span></div>
+      <div class="odo-group"><div class="odo-wheels" data-w="home"></div><span class="odo-plate">HOME</span></div>
+    </div>
+    <div class="odo-ticker" aria-live="polite"></div>
+    <ol class="odo-history"></ol>
+    <div class="odo-keys">
+      <button type="button" data-op="ball">+ BALL</button>
+      <button type="button" data-op="strike">+ STRIKE</button>
+      <button type="button" data-op="foul">+ FOUL</button>
+      <button type="button" data-op="out">OUT IN PLAY</button>
+      <button type="button" data-op="hit">SAFE (HIT)</button>
+      <button type="button" data-op="run">+ RUN</button>
+    </div>
+    <div class="odo-keys">
+      <button type="button" class="minor" data-op="ninth">JUMP TO 9TH</button>
+      <button type="button" class="minor" data-op="reset">NEW GAME</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const $ = (sel) => root.querySelector(sel);
+    const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+    const halfName = (s) => `${s.top ? 'Top' : 'Bottom'} of the ${ordinal(s.inning)}`;
+
+    // ---- Game rules (same as the Python code) ------------------------------------
+    let s;
+    const fresh = () => ({ inning: 1, top: true, away: 0, home: 0, outs: 0, balls: 0, strikes: 0, over: null });
+    // Each operation returns the chain of what happened as [level, text] pairs, lowest level first.
+    const newBatter = (chain) => { s.balls = 0; s.strikes = 0; return chain; };
+    function addOut(chain, why) {
+      chain.push(['pa', why]);
+      s.outs += 1;
+      newBatter(chain);
+      if (s.outs < 3) { chain.push(['half', `${s.outs} out${s.outs > 1 ? 's' : ''}`]); return chain; }
+      chain.push(['half', '3rd out: half inning over']);
+      s.outs = 0;
+      if (s.top) {
+        if (s.inning >= 9 && s.home > s.away) { s.over = 'HOME WINS'; chain.push(['game', 'home already leads in the 9th+: bottom half skipped, HOME WINS']); return chain; }
+        s.top = false;
+      } else {
+        if (s.inning >= 9 && s.away !== s.home) { s.over = s.away > s.home ? 'AWAY WINS' : 'HOME WINS'; chain.push(['game', `game over: ${s.over}`]); return chain; }
+        s.inning += 1; s.top = true;
+      }
+      chain.push(['game', `${halfName(s)}${s.inning > 9 && s.top ? ' (extra innings)' : ''}`]);
+      return chain;
+    }
+    const OPS = {
+      ball() {
+        s.balls += 1;
+        if (s.balls < 4) return [['pa', `ball ${s.balls}`]];
+        return newBatter([['pa', '4th ball: WALK, next batter']]);
+      },
+      strike() {
+        s.strikes += 1;
+        if (s.strikes < 3) return [['pa', `strike ${s.strikes}`]];
+        return addOut([], '3rd strike: STRIKEOUT');
+      },
+      foul() {
+        if (s.strikes < 2) { s.strikes += 1; return [['pa', `foul: strike ${s.strikes}`]]; }
+        return [['pa', 'foul with 2 strikes: count stays']];
+      },
+      out() { return addOut([], 'ball in play, caught or thrown out'); },
+      hit() { return newBatter([['pa', 'ball in play, batter safe: next batter']]); },
+      run() {
+        const team = s.top ? 'away' : 'home';
+        s[team] += 1;
+        const chain = [['score', `${team} scores (${s.away}–${s.home})`]];
+        if (!s.top && s.inning >= 9 && s.home > s.away) { s.over = 'HOME WINS'; chain.push(['game', 'home takes the lead in the 9th+: WALK-OFF, HOME WINS']); }
+        return chain;
+      },
+      ninth() { Object.assign(s, { inning: 9, top: true, outs: 0, balls: 0, strikes: 0 }); return [['game', `jumped to the ${halfName(s)}`]]; },
+      reset() { s = fresh(); return [['game', 'new game: Top of the 1st']]; },
+    };
+
+    // ---- Wheels ---------------------------------------------------------------------
+    // A wheel is a strip of symbols with the first symbol repeated at the end. Going to a lower
+    // value rolls forward onto that repeat and then snaps back, so wheels only ever turn forward.
+    function makeWheel(parent, symbols, cls = '') {
+      const w = document.createElement('div');
+      w.className = 'odo-wheel ' + cls;
+      const strip = document.createElement('div');
+      strip.className = 'odo-strip';
+      strip.innerHTML = [...symbols, symbols[0]].map((x) => `<span>${x}</span>`).join('');
+      w.appendChild(strip);
+      parent.appendChild(w);
+      let index = 0, pending = null; // pending: an unfinished roll-over { timer, target }
+      const move = (i, snap) => {
+        strip.classList.toggle('snap', !!snap);
+        strip.style.transform = `translateY(calc(${-i} * var(--odo-h)))`;
+        if (snap) void strip.offsetHeight;
+      };
+      const finish = () => { clearTimeout(pending.timer); move(pending.target, true); pending = null; };
+      return {
+        set(i) {
+          if (pending) finish(); // a new change arrived mid roll-over: complete it instantly
+          if (i === index) return;
+          if (i > index) move(i);
+          else {
+            move(symbols.length); // roll forward onto the repeated first symbol, then snap back
+            const timer = setTimeout(() => { pending = null; move(0, true); if (i) requestAnimationFrame(() => move(i)); }, 470);
+            pending = { timer, target: i };
+          }
+          index = i;
+        },
+      };
+    }
+    const DIGITS = [...'0123456789'];
+    const twoDigit = (name) => { const p = $(`[data-w="${name}"]`); return [makeWheel(p, DIGITS), makeWheel(p, DIGITS)]; };
+    const W = {
+      away: twoDigit('away'), home: twoDigit('home'), inning: twoDigit('inning'),
+      half: makeWheel($('[data-w="half"]'), ['▲', '▼']),
+      outs: makeWheel($('[data-w="outs"]'), [...'012'], 'outs'),
+      strikes: makeWheel($('[data-w="strikes"]'), [...'012'], 'strikes'),
+      balls: makeWheel($('[data-w="balls"]'), [...'0123'], 'balls'),
+    };
+    const setNumber = ([tens, ones], n) => { tens.set(Math.floor(n / 10) % 10); ones.set(n % 10); };
+
+    // Wheels for each level turn one after another, lowest level first, like an odometer carry
+    const STAGGER = 320;
+    let timers = [];
+    function render(chain) {
+      timers.forEach(clearTimeout); timers = [];
+      const levels = new Set(chain.map(([level]) => level));
+      const order = ['pa', 'half', 'game'].filter((l) => levels.has(l) || (l === 'pa' && levels.size === 0));
+      const delayOf = (level) => Math.max(0, order.indexOf(level)) * STAGGER;
+      const at = (ms, fn) => timers.push(setTimeout(fn, ms));
+      at(0, () => { W.balls.set(s.balls); W.strikes.set(s.strikes); setNumber(W.away, s.away); setNumber(W.home, s.home); });
+      at(delayOf('half'), () => W.outs.set(s.outs));
+      at(delayOf('game'), () => { W.half.set(s.top ? 0 : 1); setNumber(W.inning, s.inning); });
+      // Light the carry arrows the chain crossed
+      root.querySelectorAll('.odo-carry').forEach((c) => c.classList.remove('lit'));
+      order.forEach((level, i) => { if (i) at(i * STAGGER - 120, () => $(`[data-carry="${order[i - 1]}"]`)?.classList.add('lit')); });
+      at(order.length * STAGGER + 700, () => root.querySelectorAll('.odo-carry').forEach((c) => c.classList.remove('lit')));
+      root.querySelectorAll('[data-op]').forEach((b) => (b.disabled = !!s.over && b.dataset.op !== 'reset'));
+    }
+
+    function log(chain) {
+      const ticker = $('.odo-ticker');
+      const prev = ticker.textContent;
+      ticker.textContent = chain.map(([, t]) => t).join(' → ') + (s.over ? '  ■ NEW GAME to play again' : '');
+      ticker.classList.toggle('over', !!s.over);
+      if (prev) {
+        const li = document.createElement('li');
+        li.textContent = prev;
+        $('.odo-history').prepend(li);
+        while ($('.odo-history').children.length > 3) $('.odo-history').lastChild.remove();
+      }
+    }
+
+    root.querySelectorAll('[data-op]').forEach((b) => b.addEventListener('click', () => {
+      const chain = OPS[b.dataset.op]();
+      render(chain);
+      log(chain);
+    }));
+
+    s = fresh();
+    render([]);
+    $('.odo-ticker').textContent = 'Top of the 1st, 0–0. Add balls and strikes to watch them carry.';
+  })();
+</script>

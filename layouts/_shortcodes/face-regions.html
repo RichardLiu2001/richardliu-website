@@ -1,0 +1,187 @@
+{{- /*
+  Face split into 12 makeup regions. Click a region (on the face or in the list) to toggle its highlight and label.
+  Usage in a post: {{< face-regions >}}
+  Face drawing matches makeup-layers.html (200 x 260 canvas), shifted right to leave room for labels.
+*/ -}}
+<style>
+  .fr-root {
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+    display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 24px; align-items: center;
+  }
+  @media (max-width: 760px) { .fr-root { grid-template-columns: 1fr; } }
+  .fr-root svg { display: block; width: 100%; height: auto; }
+  .fr-region { fill: transparent; stroke: var(--secondary); stroke-width: 0.6; stroke-dasharray: 2 2; cursor: pointer; outline: none; }
+  .fr-region.fr-skin { stroke: none; }
+  .fr-region.hover { fill: var(--c); fill-opacity: 0.22; }
+  .fr-region.on { fill: var(--c); fill-opacity: 0.5; stroke: var(--c); stroke-width: 1.2; stroke-dasharray: none; }
+  .fr-region.fr-skin.on { fill-opacity: 0.28; }
+  .fr-label { opacity: 0; pointer-events: none; }
+  .fr-label.show { opacity: 1; }
+  .fr-label text { font-size: 9px; font-weight: 700; letter-spacing: 0.03em; fill: var(--c); }
+  .fr-label line { stroke: var(--c); stroke-width: 0.8; }
+  .fr-label circle { fill: var(--c); }
+  .fr-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .fr-root button {
+    font: inherit; font-size: 13px; cursor: pointer; color: var(--primary); background: var(--entry);
+    border: 1.5px solid var(--tertiary); border-radius: 8px; padding: 5px 10px;
+    display: flex; align-items: center; gap: 8px; text-align: left;
+  }
+  .fr-list button[aria-pressed="true"] { border-color: var(--c); box-shadow: inset 0 0 0 1px var(--c); font-weight: 600; }
+  .fr-swatch { flex: none; width: 11px; height: 11px; border-radius: 3px; background: var(--c); }
+  .fr-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .fr-actions button { border-radius: 999px; padding: 3px 14px; }
+</style>
+
+<div class="fr-root">
+  <svg viewBox="0 0 450 262" role="group" aria-label="Face divided into makeup regions"></svg>
+  <div>
+    <div class="fr-list" role="group" aria-label="Face regions"></div>
+    <div class="fr-actions"><button type="button" data-fr-all>Show all</button><button type="button" data-fr-clear>Clear</button></div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const svg = root.querySelector('svg');
+    const NS = 'http://www.w3.org/2000/svg';
+    const uid = 'fr' + Math.random().toString(36).slice(2, 8);
+    const OX = 110; // face offset: labels go in the margins on either side
+
+    // Same face geometry as makeup-layers.html. Left-side features are mirrored for the right.
+    const FACE = 'M100 48 C140 48 162 78 162 122 C162 165 138 206 100 214 C62 206 38 165 38 122 C38 78 60 48 100 48 Z';
+    const HAIR = 'M100 28 C152 28 180 70 178 130 C177 190 170 230 164 262 L36 262 C30 230 23 190 22 130 C20 70 48 28 100 28 Z';
+    const NECK = 'M78 180 Q80 225 70 262 L130 262 Q120 225 122 180 Z';
+    const EYE = 'M60 118 Q76 106 92 118 Q76 128 60 118 Z';
+    const BROW = 'M59 105 Q73 94 92 99 L92 103 Q75 99 59 106 Z';
+    const NOSE = 'M97 125 Q95 142 91 150 Q94 156 100 155 Q106 156 109 150';
+    const LIPS = 'M84 180 Q92 172 100 176 Q108 172 116 180 Q108 194 100 194 Q92 194 84 180 Z';
+    const MOUTH = 'M84 180 Q100 184 116 180';
+    const MIRROR = 'translate(200 0) scale(-1 1)';
+
+    // ---- Regions: edit here --------------------------------------------------
+    // paired: the shape is the left side and is mirrored for the right.
+    // anchor: where the label's leader line points (on the face, before OX offset).
+    // side / labelY: which margin the label sits in, and at what height.
+    const REGIONS = [
+      { name: 'GENERAL_FACE_SKIN', color: '#64748b', skin: true, d: FACE, anchor: [147, 128], side: 'right', labelY: 112 },
+      { name: 'FOREHEAD', color: '#2563eb', d: 'M52 96 C54 72, 74 56, 100 56 C126 56, 146 72, 148 96 C132 92, 116 94, 104 100 L96 100 C84 94, 68 92, 52 96 Z', anchor: [118, 74], side: 'right', labelY: 62 },
+      { name: 'TEMPLES', color: '#7c3aed', paired: true, d: 'M42 92 C40 102, 39 112, 40 124 L52 120 C52 112, 51 102, 52 96 Z', anchor: [45, 108], side: 'left', labelY: 78 },
+      { name: 'CHEEKS', color: '#db2777', paired: true, d: 'M42 134 Q58 132 80 142 Q87 158 82 172 Q64 178 49 168 Q42 152 42 134 Z', anchor: [60, 156], side: 'left', labelY: 182 },
+      { name: 'JAW', color: '#ea580c', paired: true, d: 'M40 150 C44 176, 60 196, 82 206 L84 197 C66 189, 53 173, 50 150 Z', anchor: [52, 180], side: 'left', labelY: 208 },
+      { name: 'UNDER_EYES', color: '#0891b2', paired: true, d: 'M60 123 Q76 133 92 123 Q90 136 77 141 Q64 137 60 123 Z', anchor: [76, 133], side: 'left', labelY: 156 },
+      { name: 'EYES_EYELIDS', color: '#16a34a', paired: true, d: 'M56 118 Q74 100 96 114 Q78 128 56 118 Z', anchor: [70, 118], side: 'left', labelY: 130 },
+      { name: 'LASHES', color: '#ca8a04', paired: true, d: 'M58 118 Q76 104 94 118 Q76 110 58 118 Z', anchor: [84, 110], side: 'left', labelY: 104 },
+      { name: 'BROWS', color: '#dc2626', paired: true, d: 'M57 106 Q73 93 95 99 L95 105 Q75 100 58 111 Z', anchor: [66, 101], side: 'left', labelY: 52 },
+      { name: 'NOSE', color: '#4f46e5', d: 'M94 110 Q97 122 96 134 Q90 144 88 152 Q93 161 100 160 Q107 161 112 152 Q110 144 104 134 Q103 122 106 110 Z', anchor: [106, 142], side: 'right', labelY: 150 },
+      { name: 'LIPS', color: '#be123c', d: LIPS, anchor: [112, 184], side: 'right', labelY: 188 },
+      { name: 'CHIN', color: '#0d9488', d: 'M84 199 Q100 205 116 199 L118 207 C110 212 105 213.5 100 214 C95 213.5 90 212 82 207 Z', anchor: [108, 207], side: 'right', labelY: 226 },
+    ];
+    // List order in the buttons (top of the face to bottom, then whole face)
+    const LIST_ORDER = ['FOREHEAD', 'TEMPLES', 'BROWS', 'EYES_EYELIDS', 'LASHES', 'UNDER_EYES', 'NOSE', 'CHEEKS', 'JAW', 'CHIN', 'LIPS', 'GENERAL_FACE_SKIN'];
+    // --------------------------------------------------------------------------
+
+    const el = (tag, attrs = {}, parent = svg) => {
+      const e = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      parent.appendChild(e);
+      return e;
+    };
+    const both = (s) => s + `<g transform="${MIRROR}">${s}</g>`;
+
+    // Face illustration (not interactive)
+    const face = el('g', { transform: `translate(${OX} 0)`, 'pointer-events': 'none' });
+    face.innerHTML = `
+      <defs><radialGradient id="${uid}g" cx="50%" cy="42%" r="60%"><stop offset="0" stop-color="#ecc3a2"/><stop offset="1" stop-color="#d7a280"/></radialGradient></defs>
+      <path d="${HAIR}" fill="#3a2820"/>
+      <path d="${NECK}" fill="#cf9876"/>
+      ${both('<ellipse cx="40" cy="130" rx="8" ry="14" fill="#d59d7a"/>')}
+      <path d="${FACE}" fill="url(#${uid}g)"/>
+      ${both(`
+        <path d="${BROW}" fill="#5a3f30"/>
+        <path d="${EYE}" fill="#fbf7f2"/>
+        <circle cx="76" cy="117" r="6" fill="#6b4428"/><circle cx="76" cy="117" r="2.8" fill="#1d130d"/><circle cx="78" cy="115" r="1.1" fill="#fff"/>
+        <path d="M60 118 Q76 106 92 118" fill="none" stroke="#2a1c15" stroke-width="1.4"/>
+        <g stroke="#2a1c15" stroke-width="0.9" stroke-linecap="round"><path d="M65 113 L63 109"/><path d="M70 111 L69 107"/><path d="M76 110 L76 106"/><path d="M82 111 L83 107"/><path d="M87 113 L89 109"/></g>
+      `)}
+      <path d="${NOSE}" fill="none" stroke="#a8745a" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="${LIPS}" fill="#c98079"/>
+      <path d="${MOUTH}" fill="none" stroke="#8e4d48" stroke-width="1.2"/>`;
+
+    // Interactive regions, drawn over the illustration. The whole-face region goes first so the others sit on top.
+    const regionLayer = el('g', { transform: `translate(${OX} 0)` });
+    const labelLayer = el('g', {});
+    const state = new Map(); // name -> { shapes, label, button, on }
+
+    REGIONS.forEach((r) => {
+      const shapes = [];
+      const add = (transform) => {
+        const s = el('path', {
+          d: r.d, class: 'fr-region' + (r.skin ? ' fr-skin' : ''), style: `--c: ${r.color}`,
+          tabindex: shapes.length ? -1 : 0, role: 'button', 'aria-label': r.name, ...(transform ? { transform } : {}),
+        }, regionLayer);
+        shapes.push(s);
+      };
+      add();
+      if (r.paired) add(MIRROR);
+
+      // Label in the side margin with a leader line to the region
+      const ax = OX + (r.side === 'right' ? 200 - (r.paired ? r.anchor[0] : 200 - r.anchor[0]) : r.anchor[0]);
+      const ay = r.anchor[1];
+      const lx = r.side === 'right' ? OX + 214 : OX - 14;
+      const label = el('g', { class: 'fr-label', style: `--c: ${r.color}` }, labelLayer);
+      el('line', { x1: lx + (r.side === 'right' ? -4 : 4), y1: r.labelY - 3, x2: ax, y2: ay }, label);
+      el('circle', { cx: ax, cy: ay, r: 1.8 }, label);
+      const text = el('text', { x: lx, y: r.labelY, 'text-anchor': r.side === 'right' ? 'start' : 'end' }, label);
+      text.textContent = r.name;
+
+      state.set(r.name, { shapes, label, on: false, color: r.color });
+    });
+
+    // Buttons
+    const list = root.querySelector('.fr-list');
+    LIST_ORDER.forEach((name) => {
+      const st = state.get(name);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.style.setProperty('--c', st.color);
+      b.setAttribute('aria-pressed', 'false');
+      b.innerHTML = '<span class="fr-swatch"></span>';
+      b.append(name);
+      list.appendChild(b);
+      st.button = b;
+    });
+
+    function update(name) {
+      const st = state.get(name);
+      st.shapes.forEach((s) => s.classList.toggle('on', st.on));
+      st.button.setAttribute('aria-pressed', String(st.on));
+      st.label.classList.toggle('show', st.on || st.hover);
+    }
+    const toggle = (name) => { const st = state.get(name); st.on = !st.on; update(name); };
+    const hover = (name, on) => {
+      const st = state.get(name);
+      st.hover = on;
+      st.shapes.forEach((s) => s.classList.toggle('hover', on && !st.on));
+      update(name);
+    };
+
+    state.forEach((st, name) => {
+      [...st.shapes, st.button].forEach((target) => {
+        target.addEventListener('click', () => toggle(name));
+        target.addEventListener('pointerenter', () => hover(name, true));
+        target.addEventListener('pointerleave', () => hover(name, false));
+        target.addEventListener('focus', () => hover(name, true));
+        target.addEventListener('blur', () => hover(name, false));
+      });
+      st.shapes[0].addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(name); }
+      });
+    });
+
+    root.querySelector('[data-fr-all]').addEventListener('click', () => state.forEach((st, name) => { st.on = name !== 'GENERAL_FACE_SKIN'; update(name); }));
+    root.querySelector('[data-fr-clear]').addEventListener('click', () => state.forEach((st, name) => { st.on = false; update(name); }));
+  })();
+</script>

@@ -1,0 +1,24 @@
+{{- /* Load Mermaid only on pages that contain a ```mermaid code block */ -}}
+{{- if .Store.Get "hasMermaid" }}
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+  const root = document.documentElement;
+  const blocks = [...document.querySelectorAll('pre.mermaid')];
+  blocks.forEach((el) => (el.dataset.source = el.textContent));
+
+  // Render with the theme PaperMod has set on <html data-theme="...">
+  async function render() {
+    mermaid.initialize({ startOnLoad: false, deterministicIds: true, theme: root.dataset.theme === 'dark' ? 'dark' : 'default' });
+    blocks.forEach((el) => {
+      el.removeAttribute('data-processed');
+      el.textContent = el.dataset.source;
+    });
+    await mermaid.run({ nodes: blocks });
+  }
+
+  render();
+  // Re-render when the theme toggle changes data-theme
+  new MutationObserver(render).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+</script>
+{{- end }}

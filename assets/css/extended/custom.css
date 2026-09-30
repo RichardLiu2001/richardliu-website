@@ -1,0 +1,27 @@
+:root {
+    /* Text column: ~70 characters per line for comfortable reading */
+    --main-width: 760px;
+    /* Max width for diagrams and tables, which break out of the text column */
+    --wide-width: 1100px;
+}
+
+/* Center wide elements on the text column and let them extend past it */
+.post-content pre.mermaid,
+.post-content table {
+    width: max-content;
+    max-width: min(var(--wide-width), 100vw - 2 * var(--gap));
+    margin-left: 50%;
+    transform: translateX(-50%);
+}
+
+/* Scroll tables that are wider than the screen instead of clipping them */
+.post-content table {
+    display: block;
+    overflow-x: auto;
+}
+
+.post-content pre.mermaid {
+    width: min(var(--wide-width), 100vw - 2 * var(--gap));
+    background: none;
+    text-align: center;
+}

@@ -1,0 +1,226 @@
+{{- /*
+  Interactive fabric flowchart: pick a named fabric to highlight its path.
+  Usage in a post: {{< fabric-paths >}}
+  Static version that stops at SHEET, with no fabric picker: {{< fabric-paths mode="sheet" >}}
+  To add a fabric or change the chart, edit NODES / EDGES / FABRICS in the script below.
+*/ -}}
+<style>
+  .fp-root {
+    --fp-color: var(--secondary);
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+  }
+  .fp-buttons { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 12px; }
+  .fp-buttons button {
+    font: inherit; font-size: 14px; padding: 5px 14px; cursor: pointer;
+    color: var(--primary); background: var(--entry);
+    border: 1.5px solid var(--tertiary); border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .fp-buttons button[aria-pressed="true"] { border-color: var(--swatch); box-shadow: 0 0 0 1px var(--swatch); font-weight: 600; }
+  .fp-swatch { width: 10px; height: 10px; border-radius: 50%; background: var(--swatch); }
+  .fp-root svg { display: block; width: 100%; height: auto; }
+  .fp-root svg text { fill: var(--primary); font-size: 12.5px; }
+  .fp-title { font-size: 11px !important; font-weight: 700; letter-spacing: 0.02em; }
+  .fp-node > rect.fp-box { fill: var(--entry); stroke: var(--secondary); stroke-width: 1.2; }
+  .fp-node.method > rect.fp-box { stroke-dasharray: 0; }
+  .fp-row-bg { fill: transparent; }
+  .fp-edge { fill: none; stroke: var(--secondary); stroke-width: 1.4; transition: opacity .2s; }
+  .fp-arrowhead { fill: var(--secondary); }
+  .fp-arrowhead.on { fill: var(--fp-color); }
+  .fp-edge-label { font-size: 11.5px !important; fill: var(--secondary) !important; }
+  .fp-node { transition: opacity .2s; }
+
+  /* A fabric is selected: dim everything off its path, color everything on it */
+  .fp-root.has-sel .fp-edge:not(.on) { opacity: 0.25; }
+  .fp-root.has-sel .fp-node:not(.on) { opacity: 0.4; }
+  .fp-edge.on { stroke: var(--fp-color); stroke-width: 3; }
+  .fp-node.on > rect.fp-box { stroke: var(--fp-color); stroke-width: 2.5; }
+  .fp-row.on .fp-row-bg { fill: var(--fp-color); fill-opacity: 0.18; }
+  .fp-row.on text { fill: var(--fp-color); font-weight: 700; }
+
+  .fp-note { text-align: center; font-size: 15px; color: var(--primary); margin: 10px 0 0; min-height: 1.5em; }
+  .fp-legend { text-align: center; font-size: 13px; color: var(--secondary); margin: 4px 0 0; }
+</style>
+
+<div class="fp-root" data-mode="{{ .Get "mode" }}">
+  <div class="fp-buttons" role="group" aria-label="Named fabrics"></div>
+  <svg viewBox="0 0 1190 540" role="img" aria-label="Flowchart from fibers to sheets, with the selected fabric's path highlighted"></svg>
+  <p class="fp-note" aria-live="polite"></p>
+  <p class="fp-legend">Square boxes are material states. Rounded boxes are transformation methods.</p>
+</div>
+
+<script>
+  (() => {
+    // ---- Chart data: edit here ----------------------------------------------
+    // kind: 'state' (square corners) or 'method' (rounded). x, y: top-left corner.
+    const NODES = [
+      { id: 'F',  title: 'FIBERS',             kind: 'state',  x: 10,  y: 40,  rows: ['Cotton', 'Flax', 'Wool', 'Silk', 'Polyester', 'Nylon'] },
+      { id: 'YC', title: 'YARN_CONSTRUCTIONS', kind: 'method', x: 180, y: 40,  rows: ['Spun', 'Filament', 'Plied', 'Chenille', 'Bouclé'] },
+      { id: 'NW', title: 'NONWOVEN_METHODS',   kind: 'method', x: 180, y: 250, rows: ['Felting'] },
+      { id: 'Y',  title: 'YARNS',              kind: 'state',  x: 350, y: 40,  rows: ['Spun yarn', 'Filament yarn', 'Plied yarn', 'Chenille yarn', 'Bouclé yarn'] },
+      { id: 'WP', title: 'WEAVE_PATTERNS',     kind: 'method', x: 520, y: 20,  rows: ['Plain', 'Twill', 'Satin'] },
+      { id: 'KP', title: 'KNIT_PATTERNS',      kind: 'method', x: 520, y: 150, rows: ['Jersey', 'Rib', 'Interlock', 'Piqué', 'Cable', 'French terry'] },
+      { id: 'SM', title: 'SHEET_MATERIALS',    kind: 'state',  x: 350, y: 380, rows: ['Leather', 'Suede', 'Rubber', 'Latex', 'Vinyl / PVC'] },
+      { id: 'SH', title: 'SHEET',              kind: 'state',  x: 690, y: 170, rows: [], height: 60 },
+      { id: 'FN', title: 'FINISHES',           kind: 'method', x: 860, y: 90,  rows: ['Dyeing', 'Printing', 'Napping', 'Sueding', 'Stone washing', 'Water-repellent', 'Mercerization', 'PU coating'] },
+      { id: 'FS', title: 'FINISHED SHEET',     kind: 'state',  x: 1030, y: 170, rows: [], height: 60 },
+    ];
+
+    // Edges are drawn as a straight line at height `y` from the source's right side to the target's left side.
+    // `d` overrides the route (SVG path) for edges that need to turn. Paths stop 10px short of the
+    // target so the arrowhead fills the gap.
+    const EDGES = [
+      { from: 'F',  to: 'YC', y: 111 },
+      { from: 'F',  to: 'NW', d: 'M85 202 V281 H170' },
+      { from: 'YC', to: 'Y',  y: 111 },
+      { from: 'Y',  to: 'WP', y: 80 },
+      { from: 'Y',  to: 'KP', y: 166 },
+      { from: 'WP', to: 'SH', d: 'M670 70 H765 V160' },
+      { from: 'KP', to: 'SH', y: 200 },
+      { from: 'NW', to: 'SH', d: 'M330 281 H355 V345 H715 V240' },
+      { from: 'SM', to: 'SH', d: 'M500 451 H735 V240' },
+      { from: 'SH', to: 'FN', y: 200 },
+      { from: 'FN', to: 'FS', y: 200 },
+      { from: 'SH', to: 'FS', d: 'M800 230 V325 H1105 V240', label: 'no finish', labelX: 952, labelY: 318 },
+    ];
+
+    // Each fabric: the values it takes in each node, and the edges on its path.
+    const FABRICS = [
+      { name: 'Denim', light: '#2563eb', dark: '#60a5fa',
+        values: { F: ['Cotton'], YC: ['Spun'], Y: ['Spun yarn'], WP: ['Twill'] },
+        path: ['F-YC', 'YC-Y', 'Y-WP', 'WP-SH', 'SH-FS'],
+        note: 'Denim: cotton → spun yarn → twill weave.' },
+      { name: 'Silk satin', light: '#9333ea', dark: '#c084fc',
+        values: { F: ['Silk'], YC: ['Filament'], Y: ['Filament yarn'], WP: ['Satin'] },
+        path: ['F-YC', 'YC-Y', 'Y-WP', 'WP-SH', 'SH-FS'],
+        note: 'Silk satin: silk → filament yarn → satin weave. Swap silk for polyester and it is still satin.' },
+      { name: 'Flannel', light: '#ea580c', dark: '#fb923c',
+        values: { F: ['Wool', 'Cotton'], YC: ['Spun'], Y: ['Spun yarn'], WP: ['Plain', 'Twill'], FN: ['Napping'] },
+        path: ['F-YC', 'YC-Y', 'Y-WP', 'WP-SH', 'SH-FN', 'FN-FS'],
+        note: 'Flannel: wool or cotton → spun yarn → plain or twill weave → napped.' },
+      { name: 'Felt', light: '#16a34a', dark: '#4ade80',
+        values: { F: ['Wool', 'Polyester'], NW: ['Felting'] },
+        path: ['F-NW', 'NW-SH', 'SH-FS'],
+        note: 'Felt: wool → felting. It skips yarn entirely.' },
+    ];
+    // --------------------------------------------------------------------------
+
+    const W = 150, TITLE_H = 34, ROW_H = 20;
+    const NS = 'http://www.w3.org/2000/svg';
+    const root = document.currentScript.previousElementSibling;
+    const svg = root.querySelector('svg');
+    const note = root.querySelector('.fp-note');
+    const buttons = root.querySelector('.fp-buttons');
+
+    // mode="sheet": a static chart that stops at SHEET, with no fabric picker
+    const sheetOnly = root.dataset.mode === 'sheet';
+    if (sheetOnly) {
+      const dropped = new Set(['FN', 'FS']);
+      NODES.splice(0, NODES.length, ...NODES.filter((n) => !dropped.has(n.id)));
+      EDGES.splice(0, EDGES.length, ...EDGES.filter((e) => !dropped.has(e.from) && !dropped.has(e.to)));
+      svg.setAttribute('viewBox', '0 0 850 540');
+      svg.setAttribute('aria-label', 'Flowchart from fibers to sheets');
+      [buttons, note, root.querySelector('.fp-legend')].forEach((e) => e.remove());
+    }
+    // Keeps arrowhead ids unique when the chart appears more than once on a page
+    const uid = Math.random().toString(36).slice(2, 8);
+
+    const el = (tag, attrs = {}, parent = svg) => {
+      const e = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      parent.appendChild(e);
+      return e;
+    };
+    const byId = Object.fromEntries(NODES.map((n) => [n.id, n]));
+    NODES.forEach((n) => (n.h = n.height || TITLE_H + n.rows.length * ROW_H + (n.rows.length ? 8 : 0)));
+
+    // Arrowheads: one gray, one in the selected fabric's color
+    const defs = el('defs');
+    ['off', 'on'].forEach((kind) => {
+      const m = el('marker', { id: `fp-arrow-${kind}-${uid}`, viewBox: '0 0 10 10', refX: 0, refY: 5,
+        markerWidth: 9, markerHeight: 9, markerUnits: 'userSpaceOnUse', orient: 'auto-start-reverse' }, defs);
+      el('path', { d: 'M0,0 L10,5 L0,10 z', class: 'fp-arrowhead' + (kind === 'on' ? ' on' : '') }, m);
+    });
+
+    // Edges first, so boxes draw on top of them
+    const edgeEls = {};
+    EDGES.forEach((e) => {
+      const a = byId[e.from], b = byId[e.to];
+      const d = e.d || `M${a.x + W} ${e.y} H${b.x - 10}`;
+      const key = `${e.from}-${e.to}`;
+      edgeEls[key] = el('path', { d, class: 'fp-edge', 'marker-end': `url(#fp-arrow-off-${uid})` });
+      if (e.label) {
+        const t = el('text', { x: e.labelX, y: e.labelY, 'text-anchor': 'middle', class: 'fp-edge-label' });
+        t.textContent = e.label;
+      }
+    });
+
+    // Boxes, with one row per value
+    const nodeEls = {}, rowEls = {};
+    NODES.forEach((n) => {
+      const g = el('g', { class: `fp-node ${n.kind}` });
+      el('rect', { class: 'fp-box', x: n.x, y: n.y, width: W, height: n.h, rx: n.kind === 'method' ? 16 : 3 }, g);
+      const title = el('text', { class: 'fp-title', x: n.x + W / 2, y: n.rows.length ? n.y + 22 : n.y + n.h / 2 + 4, 'text-anchor': 'middle' }, g);
+      title.textContent = n.title;
+      n.rows.forEach((r, i) => {
+        const rg = el('g', { class: 'fp-row' }, g);
+        const ry = n.y + TITLE_H + i * ROW_H;
+        el('rect', { class: 'fp-row-bg', x: n.x + 6, y: ry, width: W - 12, height: ROW_H - 2, rx: 3 }, rg);
+        const t = el('text', { x: n.x + W / 2, y: ry + 14, 'text-anchor': 'middle' }, rg);
+        t.textContent = r;
+        rowEls[`${n.id}:${r}`] = rg;
+      });
+      nodeEls[n.id] = g;
+    });
+
+    if (sheetOnly) return;
+
+    // Selection
+    const dark = () => document.documentElement.dataset.theme === 'dark';
+    let selected = null;
+
+    function render() {
+      const f = FABRICS.find((x) => x.name === selected);
+      root.classList.toggle('has-sel', !!f);
+      if (f) root.style.setProperty('--fp-color', dark() ? f.dark : f.light);
+      const onNodes = new Set(f ? f.path.flatMap((k) => k.split('-')) : []);
+      Object.entries(edgeEls).forEach(([k, p]) => {
+        const on = !!f && f.path.includes(k);
+        p.classList.toggle('on', on);
+        p.setAttribute('marker-end', `url(#fp-arrow-${on ? 'on' : 'off'}-${uid})`);
+      });
+      Object.entries(nodeEls).forEach(([id, g]) => g.classList.toggle('on', onNodes.has(id)));
+      Object.entries(rowEls).forEach(([k, g]) => {
+        const [id, value] = k.split(':');
+        g.classList.toggle('on', !!f && (f.values[id] || []).includes(value));
+      });
+      buttons.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.name === selected));
+      note.textContent = f ? f.note : 'Pick a fabric to see its path.';
+    }
+
+    FABRICS.forEach((f) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.name = f.name;
+      b.style.setProperty('--swatch', dark() ? f.dark : f.light);
+      b.innerHTML = '<span class="fp-swatch"></span>';
+      b.append(f.name);
+      b.addEventListener('click', () => { selected = selected === f.name ? null : f.name; render(); });
+      buttons.appendChild(b);
+    });
+
+    // Keep colors right when the theme toggle is used
+    new MutationObserver(() => {
+      buttons.querySelectorAll('button').forEach((b) => {
+        const f = FABRICS.find((x) => x.name === b.dataset.name);
+        b.style.setProperty('--swatch', dark() ? f.dark : f.light);
+      });
+      render();
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+    selected = FABRICS[0].name;
+    render();
+  })();
+</script>

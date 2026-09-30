@@ -1,6 +1,6 @@
 baseURL = 'https://example.org/'   # TODO: update once you pick a domain/host
 locale = 'en-us'
-title = 'Richard Liu website'
+title = 'why++'
 theme = 'papermod'
 
 [params]
