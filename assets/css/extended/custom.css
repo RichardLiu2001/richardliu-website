@@ -25,3 +25,83 @@
     background: none;
     text-align: center;
 }
+
+/* Light mode: light code blocks instead of the theme's near-black ones */
+:root:not([data-theme="dark"]) {
+    --code-block-bg: rgb(246, 248, 250);
+}
+
+:root:not([data-theme="dark"]) .post-content pre code {
+    color: rgb(31, 35, 40);
+}
+
+:root:not([data-theme="dark"]) .post-content .highlight,
+:root:not([data-theme="dark"]) .post-content pre:not(.mermaid) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+/* Phones: wrap code lines and show table rows as stacked, labeled cards
+   (labels come from data-label, set in layouts/_markup/render-table.html) */
+@media (max-width: 600px) {
+    .post-content pre code {
+        white-space: pre-wrap;
+        word-break: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .post-content table:not(.highlighttable) {
+        display: block;
+        width: auto;
+        max-width: none;
+        margin-left: 0;
+        transform: none;
+        overflow: visible;
+        border: 0;
+    }
+
+    .post-content table:not(.highlighttable) thead {
+        display: none;
+    }
+
+    .post-content table:not(.highlighttable) tbody,
+    .post-content table:not(.highlighttable) tr,
+    .post-content table:not(.highlighttable) td {
+        display: block;
+    }
+
+    .post-content table:not(.highlighttable) tr {
+        margin-bottom: 12px;
+        padding: 10px 14px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+    }
+
+    /* !important: the theme's cell border rule has a higher-specificity :not() */
+    .post-content table:not(.highlighttable) td {
+        padding: 3px 0 !important;
+        border: 0 !important;
+        overflow-wrap: anywhere;
+    }
+
+    .post-content table:not(.highlighttable) td:empty {
+        display: none;
+    }
+
+    .post-content table:not(.highlighttable) td[data-label]:not([data-label=""])::before {
+        content: attr(data-label);
+        display: block;
+        font-size: 0.75em;
+        font-weight: 600;
+        color: var(--secondary);
+    }
+
+    /* The first column is the row's name: show it as the card title */
+    .post-content table:not(.highlighttable) td:first-child {
+        font-weight: 600;
+    }
+
+    .post-content table:not(.highlighttable) td:first-child::before {
+        display: none !important;
+    }
+}

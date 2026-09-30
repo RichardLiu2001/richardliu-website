@@ -23,3 +23,8 @@ theme = 'papermod'
   name = 'Posts'
   url = '/posts/'
   weight = 20
+
+# Emit CSS classes for syntax highlighting so light/dark colors come from
+# assets/css/includes/chroma-styles.css instead of one inline dark theme
+[markup.highlight]
+  noClasses = false

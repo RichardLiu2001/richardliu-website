@@ -77,6 +77,8 @@
       SMOOTH_LOOKING_SKIN:        { family: 'SURFACE_HEALTH',      regions: ['GENERAL_FACE_SKIN'] },
       HEALTHY_CHEEK_FLUSH:        { family: 'SURFACE_HEALTH',      regions: ['CHEEKS'] },
       REDUCED_UNDER_EYE_DARKNESS: { family: 'SURFACE_HEALTH',      regions: ['UNDER_EYES'] },
+      SUN_KISSED_WARMTH:          { family: 'SURFACE_HEALTH',      regions: ['FOREHEAD', 'CHEEKS', 'NOSE', 'JAW'] },
+      FAIR_BRIGHT_COMPLEXION:     { family: 'SURFACE_HEALTH',      regions: ['GENERAL_FACE_SKIN'] },
       PROMINENT_EYES:             { family: 'FEATURE_SALIENCE',    regions: ['EYES_EYELIDS', 'LASHES'] },
       VISIBLE_LASHES:             { family: 'FEATURE_SALIENCE',    regions: ['LASHES'] },
       PROMINENT_LIPS:             { family: 'FEATURE_SALIENCE',    regions: ['LIPS'] },
@@ -86,8 +88,9 @@
     };
     const PRODUCTS = [
       { name: 'FOUNDATION', description: 'Broadly evens facial skin appearance', bats: ['EVEN_SKIN_TONE', 'SMOOTH_LOOKING_SKIN'], layers: ['COMPLEXION_BASE'], appearance: ['COLOR', 'OPACITY', 'FINISH'], structure: [] },
+      { name: 'TONE_UP_CREAM', description: 'Lightly tinted white/lavender cream that lightens and brightens overall complexion', bats: ['FAIR_BRIGHT_COMPLEXION'], layers: ['COMPLEXION_BASE'], appearance: ['COLOR'], structure: [] },
       { name: 'CONCEALER', description: 'Locally hides discoloration or darkness', bats: ['EVEN_SKIN_TONE', 'REDUCED_UNDER_EYE_DARKNESS'], layers: ['LOCAL_CORRECTION'], appearance: ['COLOR', 'OPACITY'], structure: [] },
-      { name: 'BRONZER', description: 'Adds warmer/darker coloration to selected facial regions', bats: ['EVEN_SKIN_TONE'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
+      { name: 'BRONZER', description: 'Adds warmer/darker coloration to selected facial regions', bats: ['SUN_KISSED_WARMTH'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
       { name: 'CONTOUR', description: 'Adds strategic darkness to alter apparent facial geometry', bats: ['PROMINENT_CHEEKBONES', 'NARROWER_DEFINED_NOSE', 'DEFINED_JAW'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
       { name: 'BLUSH', description: 'Adds reddish/pink coloration to cheeks', bats: ['HEALTHY_CHEEK_FLUSH'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
       { name: 'MASCARA', description: 'Darkens and alters eyelashes', bats: ['VISIBLE_LASHES', 'PROMINENT_EYES'], layers: ['FEATURE_MAKEUP'], appearance: ['COLOR'], structure: ['THICKNESS', 'LENGTH', 'ORIENTATION'] },
@@ -103,6 +106,7 @@
     // anchor: where BAT links land (left side of the face, since the BATs are to the left)
     const REGIONS = {
       GENERAL_FACE_SKIN: { d: FACE, skin: true, anchor: [62, 86] },
+      FOREHEAD:     { d: 'M52 96 C54 72, 74 56, 100 56 C126 56, 146 72, 148 96 C132 92, 116 94, 104 100 L96 100 C84 94, 68 92, 52 96 Z', anchor: [72, 80] },
       CHEEKS:       { paired: true, d: 'M42 134 Q58 132 80 142 Q87 158 82 172 Q64 178 49 168 Q42 152 42 134 Z', anchor: [60, 156] },
       JAW:          { paired: true, d: 'M40 150 C44 176, 60 196, 82 206 L84 197 C66 189, 53 173, 50 150 Z', anchor: [50, 176] },
       UNDER_EYES:   { paired: true, d: 'M60 123 Q76 133 92 123 Q90 136 77 141 Q64 137 60 123 Z', anchor: [70, 132] },
@@ -119,7 +123,7 @@
     const SX = 0.52, SK = -0.17;             // horizontal squash and vertical slant of each pane
     const STEP = 77, TX0 = 334, TY0 = 122;   // spacing between panes, position of the back pane
     const LIFT = 56;                        // how far the product's layer rises out of the deck
-    const BAT_X = 16, BAT_W = 256;
+    const BAT_X = 16, BAT_W = 272;
     const paneOrigin = (i) => [TX0 + i * STEP, TY0];
     const onPane = (i, [x, y], lifted) => { const [tx, ty] = paneOrigin(i); return [tx + SX * x, ty + SK * x + y - (lifted ? LIFT : 0)]; };
 

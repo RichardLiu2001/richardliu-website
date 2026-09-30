@@ -19,6 +19,7 @@ CREATE TABLE FACE_REGIONS(REGION PK, DESCRIPTION);
 ### 1b. BATs
 **Beauty Aesthetic Target (BAT)**: a commonly desired visual characteristic of a face that beauty-oriented makeup attempts to create, strengthen, or preserve.
 - A BAT is not a product or technique. It is the desired visual endpoint.
+- BATs can vary by culture or individual. Below, I'm using commonly accepted BATs.
 ```sql
 CREATE TABLE BATS(BAT PK, DESCRIPTION, FACE_REGIONS[] FK);
 ```
@@ -29,6 +30,8 @@ CREATE TABLE BATS(BAT PK, DESCRIPTION, FACE_REGIONS[] FK);
 | `SMOOTH_LOOKING_SKIN` | `SURFACE_HEALTH` | `[GENERAL_FACE_SKIN]` | Skin surface appears smoother / less texturally irregular |
 | `HEALTHY_CHEEK_FLUSH` | `SURFACE_HEALTH` | `[CHEEKS]` | Cheeks have a preferred reddish/pink coloration |
 | `REDUCED_UNDER_EYE_DARKNESS` | `SURFACE_HEALTH` | `[UNDER_EYES]` | Under-eye region appears less dark/discolored |
+| `SUN_KISSED_WARMTH` | `SURFACE_HEALTH` | `[FOREHEAD, CHEEKS, NOSE, JAW]` | Skin appears warmer / lightly tanned, as if from sun exposure |
+| `FAIR_BRIGHT_COMPLEXION` | `SURFACE_HEALTH` | `[GENERAL_FACE_SKIN]` | Skin appears lighter and brighter overall |
 | `PROMINENT_EYES` | `FEATURE_SALIENCE` | `[EYES_EYELIDS, LASHES]` | Eyes stand out more strongly from the surrounding face |
 | `DEFINED_BROWS` | `FEATURE_SALIENCE` | `[BROWS]` | Brows appear clearer and more visually defined |
 | `VISIBLE_LASHES` | `FEATURE_SALIENCE` | `[LASHES]` | Eyelashes appear more noticeable |
@@ -40,15 +43,12 @@ CREATE TABLE BATS(BAT PK, DESCRIPTION, FACE_REGIONS[] FK);
 | `PROMINENT_CHEEKBONES` | `GEOMETRY_PROPORTION` | `[CHEEKS]` | Cheekbone structure appears more prominent |
 | `DEFINED_JAW` | `GEOMETRY_PROPORTION` | `[JAW, CHIN]` | Jawline/chin boundary appears more structurally defined |
 
-We have a set of conventional goals or targets. If you asked someone why they are using a makeup product, the BAT is most likely the deepest reason that can be verbalized.
+If you asked someone why they are using a makeup product, the BAT is most likely the deepest answer that can be verbalized. Going deeper than the BAT is less clear and goes into anthropology / evolutionary biology. We do not need to go to the level of "cheek redness is attractive because ancestral humans evolved to detect blood perfusion as a fertility signal". We can just assume BATs like `red cheeks = good` as axiomatic and a terminal node.
+- Notice how I explain this. BATS has `FACE_REGIONS` as a FK. Thus I cannot explain BATs before explaining `FACE_REGIONS`. Just like a forward-declaration error in C++ or a DAG traversal.
 
-Going deeper than the BAT is a little less clear. You can divide BATs into general categories (look more youthful / healthy, look more feminine, other biological / cultural attractiveness factors), but specifics kind of go into anthropology. We do not need to go to the level of "cheek redness is attractive because ancestral humans evolved to detect blood perfusion as a fertility signal". We can just assume things like red cheeks = axiomatic and a terminal node.
-
-Notice how I explain this. BATS has `FACE_REGIONS` as a FK. Thus I cannot explain BATs before explaining `FACE_REGIONS`. Just like a forward-declaration error in C++ or a DAG traversal.
-
-## 2. Implementation
+## 2. Execution
 ### 2a. Mechanisms
-Fundamentally, there are only two things makeup can do to your face. The first is change its appearance, or how it looks WITHOUT changing the physical structure. 
+Fundamentally, there are only two things makeup can do to your face. The first is change its appearance, or how it looks WITHOUT changing the physical structure. This is essentially applying some sort of pigment to the surface:
 ```sql
 CREATE TABLE APPEARANCE_CHANGES(APPEARANCE_CHANGE PK, DESCRIPTION);
 ```
@@ -72,18 +72,19 @@ CREATE TABLE STRUCTURE_CHANGES(STRUCTURE_CHANGE PK, DESCRIPTION);
 | `ADD_MATERIAL` | Add lashes, fibers, etc. |
 
 ### 2b. Order
-These also typically have an order in layers.
+These changes are also typically applied to the face in layers in a specific order.
 ```sql
 CREATE TABLE LAYERS(LAYER PK, DESCRIPTION, TYPICAL_PRIORITY INT);
 ```
-| Layer | Examples |
-|---|---|
-| `PREP` | primer |
-| `COMPLEXION_BASE` | foundation, skin tint, BB/CC cream |
-| `LOCAL_CORRECTION` | concealer, color corrector |
-| `FACE_DIMENSION_COLOR` | blush, bronzer, contour, highlighter |
-| `FEATURE_MAKEUP` | eyeshadow, eyeliner, mascara, false lashes, brow products, lipstick, lip liner |
-| `FINISH_SET` | setting powder, finishing powder, setting spray, some gloss/topper products |
+| Layer | Examples | Typical priority |
+|---|---|---|
+| `PREP` | primer | 1 |
+| `COMPLEXION_BASE` | foundation, skin tint, BB/CC cream, tone-up cream | 2 |
+| `LOCAL_CORRECTION` | concealer, color corrector | 3 |
+| `FACE_DIMENSION_COLOR` | blush, bronzer, contour, highlighter | 4 |
+| `FEATURE_MAKEUP` | eyeshadow, eyeliner, mascara, false lashes, brow products, lipstick, lip liner | 5 |
+| `FINISH_SET` | setting powder, finishing powder, setting spray, some gloss/topper products | 6 |
+- Note that this can also technically vary by the person, but this is pretty much the universal order. Some layers may also be skipped.
 
 ## 3. Makeup Products
 Now we can define makeup products as products that:
@@ -106,10 +107,11 @@ Now, we can easily understand and conceptualize each makeup product:
 | `PRIMER` | Prepares skin for later makeup | `[SMOOTH_LOOKING_SKIN]` | `[PREP]` | `[FINISH]` | `[]` |
 | `FOUNDATION` | Broadly evens facial skin appearance | `[EVEN_SKIN_TONE, SMOOTH_LOOKING_SKIN]` | `[COMPLEXION_BASE]` | `[COLOR, OPACITY, FINISH]` | `[]` |
 | `SKIN_TINT` | Lightweight complexion evening | `[EVEN_SKIN_TONE]` | `[COMPLEXION_BASE]` | `[COLOR, OPACITY]` | `[]` |
+| `TONE_UP_CREAM` | Lightly tinted white/lavender cream that lightens and brightens overall complexion | `[FAIR_BRIGHT_COMPLEXION]` | `[COMPLEXION_BASE]` | `[COLOR]` | `[]` |
 | `CONCEALER` | Locally hides discoloration or darkness | `[EVEN_SKIN_TONE, REDUCED_UNDER_EYE_DARKNESS]` | `[LOCAL_CORRECTION]` | `[COLOR, OPACITY]` | `[]` |
 | `COLOR_CORRECTOR` | Uses compensating color to reduce visible discoloration | `[EVEN_SKIN_TONE, REDUCED_UNDER_EYE_DARKNESS]` | `[LOCAL_CORRECTION]` | `[COLOR, OPACITY]` | `[]` |
 | `BLUSH` | Adds reddish/pink coloration to cheeks | `[HEALTHY_CHEEK_FLUSH]` | `[FACE_DIMENSION_COLOR]` | `[COLOR]` | `[]` |
-| `BRONZER` | Adds warmer/darker coloration to selected facial regions | `[EVEN_SKIN_TONE]`* | `[FACE_DIMENSION_COLOR]` | `[COLOR]` | `[]` |
+| `BRONZER` | Adds warmer/darker coloration to selected facial regions | `[SUN_KISSED_WARMTH]` | `[FACE_DIMENSION_COLOR]` | `[COLOR]` | `[]` |
 | `CONTOUR` | Adds strategic darkness to alter apparent facial geometry | `[PROMINENT_CHEEKBONES, NARROWER_DEFINED_NOSE, DEFINED_JAW]` | `[FACE_DIMENSION_COLOR]` | `[COLOR]` | `[]` |
 | `HIGHLIGHTER` | Adds brightness and/or reflectivity to selected regions | `[PROMINENT_CHEEKBONES, PROMINENT_EYES]` | `[FACE_DIMENSION_COLOR]` | `[COLOR, FINISH]` | `[]` |
 | `EYESHADOW` | Changes coloration around the eyes | `[PROMINENT_EYES, LARGER_EYES, LIFTED_ELONGATED_EYES]` | `[FEATURE_MAKEUP]` | `[COLOR, OPACITY, FINISH]` | `[]` |
@@ -126,3 +128,4 @@ Now, we can easily understand and conceptualize each makeup product:
 
 {{< makeup-product-map >}}
 
+### The Noetic Point

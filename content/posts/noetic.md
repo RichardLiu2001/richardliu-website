@@ -18,3 +18,6 @@ Why does it use many technical concepts?
 1. These are not random. Technical concepts represent commonly-occuring structures of knowledge, entities, and relationships in the real world.
 2. You can now harness any tools. Represent your information in a relational DB? Now you can basically answer any question about it with SQL.
 3. AI understands technical concepts well.
+
+What's the point?
+Enable deeper and more rapid understanding of abstract topics. The point of that, is up to the individual. Some things you don't need to understand and hence noetic model could be useless.

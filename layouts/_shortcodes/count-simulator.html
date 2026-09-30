@@ -47,12 +47,12 @@
   .odo-carry { font: 700 12px/1 ui-monospace, monospace; color: #6b6f76; margin-bottom: calc(var(--odo-h) / 2 + 22px); transition: color .2s; }
   .odo-carry.lit { color: #fbbf24; text-shadow: 0 0 8px rgba(251, 191, 36, .8); }
   .odo-ticker {
-    margin-top: 14px; background: #0b0c0d; border-radius: 6px; padding: 9px 12px; min-height: 1.5em;
+    margin-top: 14px; background: #0b0c0d; border-radius: 6px; padding: 9px 12px; min-height: calc(2.9em + 18px); /* room for a 2-line chain (+ padding: the theme uses border-box) */
     font: 600 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #fbbf24;
     text-shadow: 0 0 6px rgba(251, 191, 36, .55); box-shadow: inset 0 2px 5px rgba(0,0,0,.9);
   }
   .odo-ticker.over { color: #fde047; }
-  .odo-history { list-style: none; margin: 8px 2px 0; padding: 0; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b8f96; max-height: 5.4em; overflow: hidden; }
+  .odo-history { list-style: none; margin: 8px 2px 0; padding: 0; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b8f96; height: 4.5em; overflow: hidden; }
   .odo-history li { margin: 0; }
   .odo-keys { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin-top: 14px; }
   .odo-root button {
@@ -81,8 +81,6 @@
       <div class="odo-group"><div class="odo-wheels" data-w="away"></div><span class="odo-plate">AWAY</span></div>
       <div class="odo-group"><div class="odo-wheels" data-w="home"></div><span class="odo-plate">HOME</span></div>
     </div>
-    <div class="odo-ticker" aria-live="polite"></div>
-    <ol class="odo-history"></ol>
     <div class="odo-keys">
       <button type="button" data-op="ball">+ BALL</button>
       <button type="button" data-op="strike">+ STRIKE</button>
@@ -95,6 +93,8 @@
       <button type="button" class="minor" data-op="ninth">JUMP TO 9TH</button>
       <button type="button" class="minor" data-op="reset">NEW GAME</button>
     </div>
+    <div class="odo-ticker" aria-live="polite"></div>
+    <ol class="odo-history"></ol>
   </div>
 </div>
 
