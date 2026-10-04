@@ -1,0 +1,44 @@
+{{- /* Plate appearance state machine. Context: dict "arrow" (unique marker id) "interactive" (bool: boxes that contain a lower level are clickable). */ -}}
+<svg viewBox="0 0 830 320" role="img" aria-label="Plate appearance state machine">
+  <defs>
+    <marker id="{{ .arrow }}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="sc-arrowhead" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <circle class="sc-start" cx="24" cy="170" r="6"/>
+  <text class="sc-upd" x="14" y="220">balls = 0, strikes = 0</text>
+  <path class="sc-edge" d="M30 170 H50" marker-end="url(#{{ .arrow }})"/>
+
+  <g class="sc-node">
+    <rect x="50" y="145" width="170" height="50" rx="6"/>
+    <text x="135" y="166" text-anchor="middle">At bat</text>
+    <text class="sc-small" x="135" y="184" text-anchor="middle">balls, strikes</text>
+  </g>
+
+  <!-- count updates -->
+  <path class="sc-edge" d="M185 145 V96 H85 V143" marker-end="url(#{{ .arrow }})"/>
+  <text class="sc-cond" x="150" y="22" text-anchor="end">ball [balls &lt; 3]</text>
+  <text class="sc-upd" x="160" y="22">balls += 1</text>
+  <text class="sc-cond" x="150" y="38" text-anchor="end">strike [strikes &lt; 2]</text>
+  <text class="sc-upd" x="160" y="38">strikes += 1</text>
+  <text class="sc-cond" x="150" y="54" text-anchor="end">foul</text>
+  <text class="sc-upd" x="160" y="54">strikes = min(2, strikes + 1)</text>
+
+  <!-- endings -->
+  <path class="sc-edge" d="M220 170 C340 170, 350 55, 458 55" marker-end="url(#{{ .arrow }})"/>
+  <path class="sc-edge" d="M220 170 C340 170, 350 128, 458 128" marker-end="url(#{{ .arrow }})"/>
+  <path class="sc-edge" d="M220 170 C340 170, 350 212, 458 212" marker-end="url(#{{ .arrow }})"/>
+  <path class="sc-edge" d="M220 170 C340 170, 350 285, 458 285" marker-end="url(#{{ .arrow }})"/>
+
+  <g class="sc-term"><rect x="460" y="38" width="120" height="34" rx="17"/><text x="520" y="59" text-anchor="middle">OUT</text></g>
+  <g class="sc-term"><rect x="460" y="111" width="120" height="34" rx="17"/><text x="520" y="132" text-anchor="middle">HIT</text></g>
+  <g class="sc-term"><rect x="460" y="195" width="120" height="34" rx="17"/><text x="520" y="216" text-anchor="middle">WALK</text></g>
+  <g class="sc-term"><rect x="460" y="268" width="120" height="34" rx="17"/><text x="520" y="289" text-anchor="middle">HIT BY PITCH</text></g>
+
+  <text class="sc-cond" x="594" y="51">strike [strikes = 2]</text>
+  <text class="sc-cond" x="594" y="68">ball in play, out · foul caught</text>
+  <text class="sc-cond" x="594" y="132">ball in play, safe</text>
+  <text class="sc-cond" x="594" y="216">ball [balls = 3]</text>
+  <text class="sc-cond" x="594" y="289">hit by pitch</text>
+</svg>

@@ -1,0 +1,36 @@
+{{- /* Half inning state machine. Context: dict "arrow" (unique marker id) "interactive" (bool: boxes that contain a lower level are clickable). */ -}}
+<svg viewBox="0 0 700 240" role="img" aria-label="Half inning state machine">
+  <defs>
+    <marker id="{{ .arrow }}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="sc-arrowhead" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <circle class="sc-start" cx="24" cy="110" r="6"/>
+  <text class="sc-upd" x="14" y="160">outs = 0, runs = 0</text>
+  <path class="sc-edge" d="M30 110 H50" marker-end="url(#{{ .arrow }})"/>
+
+  <!-- Plate appearance (contains the count machine) -->
+  <g {{ if .interactive }}class="sc-child" data-target="sc-pa" role="button" tabindex="0" aria-expanded="false"{{ else }}class="sc-node"{{ end }}>
+    <rect x="50" y="85" width="180" height="50" rx="6"/>
+    <text x="140" y="106" text-anchor="middle">Plate appearance {{ if .interactive }}<tspan class="sc-caret">▸</tspan>{{ end }}</text>
+    <text class="sc-small" x="140" y="124" text-anchor="middle">one batter</text>
+  </g>
+
+  <!-- next batter -->
+  <path class="sc-edge" d="M226 85 V40 H54 V83" marker-end="url(#{{ .arrow }})"/>
+  <text class="sc-cond" x="140" y="30" text-anchor="middle">ends [outs + k &lt; 3]</text>
+  <text class="sc-upd" x="140" y="58" text-anchor="middle">outs += k, runs += r</text>
+
+  <!-- endings -->
+  <path class="sc-edge" d="M230 110 H458" marker-end="url(#{{ .arrow }})"/>
+  <text class="sc-cond" x="344" y="102" text-anchor="middle">ends [outs + k ≥ 3]</text>
+  <text class="sc-upd" x="344" y="126" text-anchor="middle">outs += k, runs += r</text>
+  <g class="sc-term"><rect x="460" y="93" width="210" height="34" rx="17"/>
+    <text x="565" y="114" text-anchor="middle">3 outs: half inning over</text></g>
+
+  <path class="sc-edge" d="M200 135 V207 H218" marker-end="url(#{{ .arrow }})"/>
+  <text class="sc-cond" x="208" y="178">walk-off</text>
+  <g class="sc-term"><rect x="220" y="190" width="150" height="34" rx="17"/>
+    <text x="295" y="211" text-anchor="middle">Game over</text></g>
+</svg>

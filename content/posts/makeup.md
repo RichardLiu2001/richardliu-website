@@ -47,7 +47,7 @@ If you asked someone why they are using a makeup product, the BAT is most likely
 - Notice how I explain this. BATS has `FACE_REGIONS` as a FK. Thus I cannot explain BATs before explaining `FACE_REGIONS`. Just like a forward-declaration error in C++ or a DAG traversal.
 
 ## 2. Execution
-### 2a. Mechanisms
+### 2a. Types of Changes
 Fundamentally, there are only two things makeup can do to your face. The first is change its appearance, or how it looks WITHOUT changing the physical structure. This is essentially applying some sort of pigment to the surface:
 ```sql
 CREATE TABLE APPEARANCE_CHANGES(APPEARANCE_CHANGE PK, DESCRIPTION);
@@ -86,45 +86,83 @@ CREATE TABLE LAYERS(LAYER PK, DESCRIPTION, TYPICAL_PRIORITY INT);
 | `FINISH_SET` | setting powder, finishing powder, setting spray, some gloss/topper products | 6 |
 - Note that this can also technically vary by the person, but this is pretty much the universal order. Some layers may also be skipped.
 
-## 3. Makeup Products
-Now we can define makeup products as products that:
+### 2c. Tools
+There are various tools that are used to apply changes.
+```sql
+CREATE TABLE TOOLS (
+    TOOL PK,
+    DESCRIPTION
+);
+```
+| TOOL | DESCRIPTION |
+|---|---|
+| `BRUSH` | Applies and blends powders, creams, or liquids |
+| `SPONGE` | Applies and blends complexion products by pressing/dabbing |
+| `POWDER_PUFF` | Presses powder onto the skin |
+| `SPOOLIE` | Brushes and arranges brow or lash hairs |
+| `EYELASH_CURLER` | Physically curls eyelashes |
+| `TWEEZERS` | Grips individual hairs or false lashes |
+
+```sql
+CREATE TABLE FORMULATIONS (
+    FORMULATION PK,
+    DESCRIPTION
+);
+
+```
+| FORMULATION | DESCRIPTION |
+|---|---|
+| `POWDER` | Dry particulate makeup, loose or pressed |
+| `LIQUID` | Flowing liquid formulation |
+| `CREAM` | Thick, spreadable semi-solid/emulsion |
+| `GEL` | Gel-like semi-solid formulation |
+| `BALM` | Soft waxy/oily semi-solid |
+| `WAX` | Firmer wax-based formulation, common in brow/lip products |
+| `SOLID` | Solid cosmetic material, e.g. traditional lipstick or pencil core |
+
+## 3. Makeup
+so
+Now we can define makeup as products that:
 - Target one or more BATs (for which there are target `FACE_REGIONS[]`), and
 - Are typically applied in one or more LAYERs, and
 - Perform the change via modifying appearance and/or physical structure.
 ```sql
-CREATE TABLE MAKEUP_PRODUCTS (
+CREATE TABLE MAKEUP (
     PRODUCT PK,
     DESCRIPTION,
     BATS[] FK,
     LAYERS[] FK,
+    FORMULATIONS[] FK,
+    TOOLS[] FK,
     APPEARANCE_CHANGES[] FK,
-    STRUCTURE_CHANGES[] FK
+    STRUCTURE_CHANGES[] FK,
 );
 ```
+
 Now, we can easily understand and conceptualize each makeup product:
-| PRODUCT | DESCRIPTION | BATS[] | LAYERS[] | APPEARANCE_CHANGES[] | STRUCTURE_CHANGES[] |
-|---|---|---|---|---|---|
-| `PRIMER` | Prepares skin for later makeup | `[SMOOTH_LOOKING_SKIN]` | `[PREP]` | `[FINISH]` | `[]` |
-| `FOUNDATION` | Broadly evens facial skin appearance | `[EVEN_SKIN_TONE, SMOOTH_LOOKING_SKIN]` | `[COMPLEXION_BASE]` | `[COLOR, OPACITY, FINISH]` | `[]` |
-| `SKIN_TINT` | Lightweight complexion evening | `[EVEN_SKIN_TONE]` | `[COMPLEXION_BASE]` | `[COLOR, OPACITY]` | `[]` |
-| `TONE_UP_CREAM` | Lightly tinted white/lavender cream that lightens and brightens overall complexion | `[FAIR_BRIGHT_COMPLEXION]` | `[COMPLEXION_BASE]` | `[COLOR]` | `[]` |
-| `CONCEALER` | Locally hides discoloration or darkness | `[EVEN_SKIN_TONE, REDUCED_UNDER_EYE_DARKNESS]` | `[LOCAL_CORRECTION]` | `[COLOR, OPACITY]` | `[]` |
-| `COLOR_CORRECTOR` | Uses compensating color to reduce visible discoloration | `[EVEN_SKIN_TONE, REDUCED_UNDER_EYE_DARKNESS]` | `[LOCAL_CORRECTION]` | `[COLOR, OPACITY]` | `[]` |
-| `BLUSH` | Adds reddish/pink coloration to cheeks | `[HEALTHY_CHEEK_FLUSH]` | `[FACE_DIMENSION_COLOR]` | `[COLOR]` | `[]` |
-| `BRONZER` | Adds warmer/darker coloration to selected facial regions | `[SUN_KISSED_WARMTH]` | `[FACE_DIMENSION_COLOR]` | `[COLOR]` | `[]` |
-| `CONTOUR` | Adds strategic darkness to alter apparent facial geometry | `[PROMINENT_CHEEKBONES, NARROWER_DEFINED_NOSE, DEFINED_JAW]` | `[FACE_DIMENSION_COLOR]` | `[COLOR]` | `[]` |
-| `HIGHLIGHTER` | Adds brightness and/or reflectivity to selected regions | `[PROMINENT_CHEEKBONES, PROMINENT_EYES]` | `[FACE_DIMENSION_COLOR]` | `[COLOR, FINISH]` | `[]` |
-| `EYESHADOW` | Changes coloration around the eyes | `[PROMINENT_EYES, LARGER_EYES, LIFTED_ELONGATED_EYES]` | `[FEATURE_MAKEUP]` | `[COLOR, OPACITY, FINISH]` | `[]` |
-| `EYELINER` | Adds a defined line around the eye | `[PROMINENT_EYES, LARGER_EYES, LIFTED_ELONGATED_EYES]` | `[FEATURE_MAKEUP]` | `[COLOR, OPACITY]` | `[]` |
-| `MASCARA` | Darkens and alters eyelashes | `[VISIBLE_LASHES, PROMINENT_EYES]` | `[FEATURE_MAKEUP]` | `[COLOR]` | `[THICKNESS, LENGTH, ORIENTATION]` |
-| `FALSE_LASHES` | Adds artificial lash material | `[VISIBLE_LASHES, PROMINENT_EYES, LARGER_EYES]` | `[FEATURE_MAKEUP]` | `[]` | `[ADD_MATERIAL, LENGTH, DENSITY]` |
-| `BROW_PENCIL` | Adds color/definition to brows | `[DEFINED_BROWS]` | `[FEATURE_MAKEUP]` | `[COLOR, OPACITY]` | `[]` |
-| `BROW_GEL` | Colors and/or holds brow hairs in position | `[DEFINED_BROWS]` | `[FEATURE_MAKEUP]` | `[COLOR]` | `[ORIENTATION]` |
-| `LIPSTICK` | Changes lip coloration and prominence | `[PROMINENT_LIPS]` | `[FEATURE_MAKEUP]` | `[COLOR, OPACITY, FINISH]` | `[]` |
-| `LIP_LINER` | Defines or extends the visible lip boundary | `[PROMINENT_LIPS, FULLER_LIPS]` | `[FEATURE_MAKEUP]` | `[COLOR, OPACITY]` | `[]` |
-| `LIP_GLOSS` | Adds a glossy/reflective lip finish | `[PROMINENT_LIPS, FULLER_LIPS]` | `[FEATURE_MAKEUP, FINISH_SET]` | `[FINISH]` | `[]` |
-| `SETTING_POWDER` | Reduces shine and helps set complexion products | `[SMOOTH_LOOKING_SKIN]` | `[FINISH_SET]` | `[FINISH, OPACITY]` | `[]` |
-| `SETTING_SPRAY` | Alters final finish and helps makeup persist | `[]` | `[FINISH_SET]` | `[FINISH]` | `[]` |
+| PRODUCT | DESCRIPTION | BATS[] | LAYERS[] | FORMULATIONS[] | TOOLS[] | APPEARANCE_CHANGES[] | STRUCTURE_CHANGES[] |
+|---|---|---|---|---|---|---|---|
+| `PRIMER` | Prepares skin for later makeup | `[SMOOTH_LOOKING_SKIN]` | `[PREP]` | `[LIQUID, CREAM, GEL]` | `[BRUSH, SPONGE]` | `[FINISH]` | `[]` |
+| `FOUNDATION` | Broadly evens facial skin appearance | `[EVEN_SKIN_TONE, SMOOTH_LOOKING_SKIN]` | `[COMPLEXION_BASE]` | `[LIQUID, CREAM, POWDER, SOLID]` | `[BRUSH, SPONGE, POWDER_PUFF]` | `[COLOR, OPACITY, FINISH]` | `[]` |
+| `SKIN_TINT` | Lightweight complexion evening | `[EVEN_SKIN_TONE]` | `[COMPLEXION_BASE]` | `[LIQUID, CREAM]` | `[BRUSH, SPONGE]` | `[COLOR, OPACITY]` | `[]` |
+| `TONE_UP_CREAM` | Lightly tinted cream that lightens and brightens overall complexion | `[FAIR_BRIGHT_COMPLEXION]` | `[COMPLEXION_BASE]` | `[CREAM]` | `[BRUSH, SPONGE]` | `[COLOR]` | `[]` |
+| `CONCEALER` | Locally hides discoloration or darkness | `[EVEN_SKIN_TONE, REDUCED_UNDER_EYE_DARKNESS]` | `[LOCAL_CORRECTION]` | `[LIQUID, CREAM, SOLID]` | `[BRUSH, SPONGE]` | `[COLOR, OPACITY]` | `[]` |
+| `COLOR_CORRECTOR` | Uses compensating color to reduce visible discoloration | `[EVEN_SKIN_TONE, REDUCED_UNDER_EYE_DARKNESS]` | `[LOCAL_CORRECTION]` | `[LIQUID, CREAM, SOLID]` | `[BRUSH, SPONGE]` | `[COLOR, OPACITY]` | `[]` |
+| `BLUSH` | Adds reddish/pink coloration to cheeks | `[HEALTHY_CHEEK_FLUSH]` | `[FACE_DIMENSION_COLOR]` | `[POWDER, CREAM, LIQUID, SOLID]` | `[BRUSH, SPONGE]` | `[COLOR]` | `[]` |
+| `BRONZER` | Adds warmer/darker coloration to selected facial regions | `[SUN_KISSED_WARMTH]` | `[FACE_DIMENSION_COLOR]` | `[POWDER, CREAM, LIQUID, SOLID]` | `[BRUSH, SPONGE]` | `[COLOR]` | `[]` |
+| `CONTOUR` | Adds strategic darkness to alter apparent facial geometry | `[PROMINENT_CHEEKBONES, NARROWER_DEFINED_NOSE, DEFINED_JAW]` | `[FACE_DIMENSION_COLOR]` | `[POWDER, CREAM, LIQUID, SOLID]` | `[BRUSH, SPONGE]` | `[COLOR]` | `[]` |
+| `HIGHLIGHTER` | Adds brightness and/or reflectivity to selected regions | `[PROMINENT_CHEEKBONES, PROMINENT_EYES]` | `[FACE_DIMENSION_COLOR]` | `[POWDER, CREAM, LIQUID, SOLID]` | `[BRUSH, SPONGE]` | `[COLOR, FINISH]` | `[]` |
+| `EYESHADOW` | Changes coloration around the eyes | `[PROMINENT_EYES, LARGER_EYES, LIFTED_ELONGATED_EYES]` | `[FEATURE_MAKEUP]` | `[POWDER, CREAM, LIQUID, SOLID]` | `[BRUSH]` | `[COLOR, OPACITY, FINISH]` | `[]` |
+| `EYELINER` | Adds a defined line around the eye | `[PROMINENT_EYES, LARGER_EYES, LIFTED_ELONGATED_EYES]` | `[FEATURE_MAKEUP]` | `[LIQUID, GEL, SOLID]` | `[BRUSH]` | `[COLOR, OPACITY]` | `[]` |
+| `MASCARA` | Darkens and alters eyelashes | `[VISIBLE_LASHES, PROMINENT_EYES]` | `[FEATURE_MAKEUP]` | `[LIQUID, GEL, WAX]` | `[SPOOLIE, EYELASH_CURLER]` | `[COLOR]` | `[THICKNESS, LENGTH, ORIENTATION]` |
+| `FALSE_LASHES` | Adds artificial lash material | `[VISIBLE_LASHES, PROMINENT_EYES, LARGER_EYES]` | `[FEATURE_MAKEUP]` | `[]` | `[TWEEZERS, EYELASH_CURLER]` | `[]` | `[ADD_MATERIAL, LENGTH, DENSITY]` |
+| `BROW_PENCIL` | Adds color/definition to brows | `[DEFINED_BROWS]` | `[FEATURE_MAKEUP]` | `[SOLID, WAX]` | `[SPOOLIE]` | `[COLOR, OPACITY]` | `[]` |
+| `BROW_GEL` | Colors and/or holds brow hairs in position | `[DEFINED_BROWS]` | `[FEATURE_MAKEUP]` | `[GEL, WAX]` | `[SPOOLIE]` | `[COLOR]` | `[ORIENTATION]` |
+| `LIPSTICK` | Changes lip coloration and prominence | `[PROMINENT_LIPS]` | `[FEATURE_MAKEUP]` | `[SOLID, LIQUID, CREAM, BALM]` | `[BRUSH]` | `[COLOR, OPACITY, FINISH]` | `[]` |
+| `LIP_LINER` | Defines or extends the visible lip boundary | `[PROMINENT_LIPS, FULLER_LIPS]` | `[FEATURE_MAKEUP]` | `[SOLID, WAX]` | `[]` | `[COLOR, OPACITY]` | `[]` |
+| `LIP_GLOSS` | Adds a glossy/reflective lip finish | `[PROMINENT_LIPS, FULLER_LIPS]` | `[FEATURE_MAKEUP, FINISH_SET]` | `[LIQUID, GEL]` | `[BRUSH]` | `[FINISH]` | `[]` |
+| `SETTING_POWDER` | Reduces shine and helps set complexion products | `[SMOOTH_LOOKING_SKIN]` | `[FINISH_SET]` | `[POWDER]` | `[BRUSH, POWDER_PUFF]` | `[FINISH, OPACITY]` | `[]` |
+| `SETTING_SPRAY` | Alters final finish and helps makeup persist | `[]` | `[FINISH_SET]` | `[LIQUID]` | `[]` | `[FINISH]` | `[]` |
 
 {{< makeup-product-map >}}
 

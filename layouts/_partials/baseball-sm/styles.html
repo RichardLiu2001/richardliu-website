@@ -1,0 +1,55 @@
+{{- /* Shared styles for the baseball state machine diagrams (baseball-statechart, baseball-level). */ -}}
+<style>
+  .sc-root {
+    --sc-accent: rgb(37, 99, 235);
+    --sc-accent-bg: rgba(37, 99, 235, 0.08);
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+  }
+  :root[data-theme="dark"] .sc-root {
+    --sc-accent: rgb(96, 165, 250);
+    --sc-accent-bg: rgba(96, 165, 250, 0.12);
+  }
+  .sc-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .sc-root { --sc-cond: #b45309; --sc-upd: #047857; }
+  :root[data-theme="dark"] .sc-root { --sc-cond: #fbbf24; --sc-upd: #34d399; }
+  .sc-root svg .sc-cond, .sc-root svg .sc-upd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+  .sc-root svg .sc-cond { fill: var(--sc-cond); }
+  .sc-root svg .sc-upd { fill: var(--sc-upd); }
+  .sc-key { display: flex; gap: 14px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .sc-key .c { color: var(--sc-cond); }
+  .sc-key .u { color: var(--sc-upd); }
+  .sc-toolbar button {
+    font: inherit; font-size: 14px; padding: 4px 12px; cursor: pointer;
+    color: var(--primary); background: var(--entry);
+    border: 1px solid var(--tertiary); border-radius: var(--radius);
+  }
+  .sc-level {
+    border: 1px solid var(--tertiary); border-radius: var(--radius);
+    padding: 12px 16px 16px; background: var(--entry);
+  }
+  /* PaperMod's reset sets section { display: block }, which would override the hidden attribute */
+  .sc-level[hidden] { display: none; }
+  .sc-level .sc-level { margin-top: 12px; border: 2px solid var(--sc-accent); background: var(--theme); }
+  .sc-level .sc-level .sc-level { background: var(--entry); }
+  .sc-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
+  .sc-head strong { font-size: 17px; color: var(--primary); }
+  .sc-head span { font-size: 14px; color: var(--secondary); }
+  .sc-root svg { display: block; width: 100%; height: auto; margin: 0 auto; overflow: visible; }
+  .sc-root svg text { fill: var(--primary); font-size: 13px; }
+  .sc-root svg .sc-small { font-size: 11.5px; fill: var(--secondary); }
+  .sc-root svg .sc-label { font-size: 12px; fill: var(--secondary); }
+  .sc-root svg .sc-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; fill: var(--secondary); }
+  .sc-node rect { fill: var(--entry); stroke: var(--secondary); stroke-width: 1.2; }
+  .sc-term rect { fill: var(--code-bg); stroke: var(--secondary); stroke-width: 1.2; }
+  .sc-start { fill: var(--primary); }
+  .sc-edge { fill: none; stroke: var(--secondary); stroke-width: 1.4; }
+  .sc-arrowhead { fill: var(--secondary); }
+  .sc-child { cursor: pointer; outline: none; }
+  .sc-child rect { fill: var(--sc-accent-bg); stroke: var(--sc-accent); stroke-width: 2; }
+  .sc-child:hover rect, .sc-child:focus-visible rect { stroke-width: 3; }
+  .sc-child .sc-caret { fill: var(--sc-accent); font-weight: bold; }
+  .sc-mini-head .sc-key { margin-left: auto; }
+  .sc-caption { font-size: 14px; color: var(--secondary); margin: 8px 0 0; }
+</style>

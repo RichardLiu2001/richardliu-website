@@ -1,5 +1,5 @@
 {{- /*
-  Pick a makeup product to see its BATs (why), LAYER (when), and FACE_REGIONS (where).
+  Pick a makeup product to see its BATs (why), LAYER (when), FACE_REGIONS (where), and typical TOOLS (with).
   The layers are drawn as a fanned deck of panes; the product's layer rises out of the deck with its
   regions highlighted, and the layers above it fade.
   Usage in a post: {{< makeup-product-map >}}
@@ -27,6 +27,7 @@
   .pm-root svg text { fill: var(--primary); font-size: 11px; }
   .pm-head { font-size: 11px !important; font-weight: 700; fill: var(--secondary) !important; letter-spacing: 0.04em; }
   .pm-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .pm-tool-name { fill: var(--secondary) !important; font-size: 10.5px !important; font-weight: 700; }
   .pm-note { fill: var(--secondary) !important; font-size: 10.5px !important; }
   .pm-bat rect { fill: var(--c); fill-opacity: 0.14; stroke: var(--c); stroke-width: 1.4; }
   .pm-bat .pm-family { fill: var(--c) !important; font-size: 9.5px; font-weight: 700; }
@@ -87,16 +88,36 @@
       DEFINED_JAW:                { family: 'GEOMETRY_PROPORTION', regions: ['JAW', 'CHIN'] },
     };
     const PRODUCTS = [
-      { name: 'FOUNDATION', description: 'Broadly evens facial skin appearance', bats: ['EVEN_SKIN_TONE', 'SMOOTH_LOOKING_SKIN'], layers: ['COMPLEXION_BASE'], appearance: ['COLOR', 'OPACITY', 'FINISH'], structure: [] },
-      { name: 'TONE_UP_CREAM', description: 'Lightly tinted white/lavender cream that lightens and brightens overall complexion', bats: ['FAIR_BRIGHT_COMPLEXION'], layers: ['COMPLEXION_BASE'], appearance: ['COLOR'], structure: [] },
-      { name: 'CONCEALER', description: 'Locally hides discoloration or darkness', bats: ['EVEN_SKIN_TONE', 'REDUCED_UNDER_EYE_DARKNESS'], layers: ['LOCAL_CORRECTION'], appearance: ['COLOR', 'OPACITY'], structure: [] },
-      { name: 'BRONZER', description: 'Adds warmer/darker coloration to selected facial regions', bats: ['SUN_KISSED_WARMTH'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
-      { name: 'CONTOUR', description: 'Adds strategic darkness to alter apparent facial geometry', bats: ['PROMINENT_CHEEKBONES', 'NARROWER_DEFINED_NOSE', 'DEFINED_JAW'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
-      { name: 'BLUSH', description: 'Adds reddish/pink coloration to cheeks', bats: ['HEALTHY_CHEEK_FLUSH'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [] },
-      { name: 'MASCARA', description: 'Darkens and alters eyelashes', bats: ['VISIBLE_LASHES', 'PROMINENT_EYES'], layers: ['FEATURE_MAKEUP'], appearance: ['COLOR'], structure: ['THICKNESS', 'LENGTH', 'ORIENTATION'] },
-      { name: 'LIPSTICK', description: 'Changes lip coloration and prominence', bats: ['PROMINENT_LIPS'], layers: ['FEATURE_MAKEUP'], appearance: ['COLOR', 'OPACITY', 'FINISH'], structure: [] },
+      { name: 'FOUNDATION', description: 'Broadly evens facial skin appearance', bats: ['EVEN_SKIN_TONE', 'SMOOTH_LOOKING_SKIN'], layers: ['COMPLEXION_BASE'], appearance: ['COLOR', 'OPACITY', 'FINISH'], structure: [], tools: ['FLAT_BRUSH', 'SPONGE'] },
+      { name: 'TONE_UP_CREAM', description: 'Lightly tinted white/lavender cream that lightens and brightens overall complexion', bats: ['FAIR_BRIGHT_COMPLEXION'], layers: ['COMPLEXION_BASE'], appearance: ['COLOR'], structure: [], tools: ['FINGERS', 'SPONGE'] },
+      { name: 'CONCEALER', description: 'Locally hides discoloration or darkness', bats: ['EVEN_SKIN_TONE', 'REDUCED_UNDER_EYE_DARKNESS'], layers: ['LOCAL_CORRECTION'], appearance: ['COLOR', 'OPACITY'], structure: [], tools: ['SMALL_BRUSH', 'SPONGE'] },
+      { name: 'BRONZER', description: 'Adds warmer/darker coloration to selected facial regions', bats: ['SUN_KISSED_WARMTH'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [], tools: ['FLUFFY_BRUSH'] },
+      { name: 'CONTOUR', description: 'Adds strategic darkness to alter apparent facial geometry', bats: ['PROMINENT_CHEEKBONES', 'NARROWER_DEFINED_NOSE', 'DEFINED_JAW'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [], tools: ['ANGLED_BRUSH', 'SPONGE'] },
+      { name: 'BLUSH', description: 'Adds reddish/pink coloration to cheeks', bats: ['HEALTHY_CHEEK_FLUSH'], layers: ['FACE_DIMENSION_COLOR'], appearance: ['COLOR'], structure: [], tools: ['FLUFFY_BRUSH'] },
+      { name: 'MASCARA', description: 'Darkens and alters eyelashes', bats: ['VISIBLE_LASHES', 'PROMINENT_EYES'], layers: ['FEATURE_MAKEUP'], appearance: ['COLOR'], structure: ['THICKNESS', 'LENGTH', 'ORIENTATION'], tools: ['MASCARA_WAND'] },
+      { name: 'LIPSTICK', description: 'Changes lip coloration and prominence', bats: ['PROMINENT_LIPS'], layers: ['FEATURE_MAKEUP'], appearance: ['COLOR', 'OPACITY', 'FINISH'], structure: [], tools: ['BULLET'] },
     ];
     // ----------------------------------------------------------------------------
+
+    // Typical application tools, drawn in a 110 x 40 box (handle on the left, working end on the right)
+    const HANDLE = '<rect x="0" y="16" width="62" height="8" rx="4" fill="#3b3b3f" stroke="var(--secondary)" stroke-width=".6"/>';
+    const FERRULE = (h = 12) => `<rect x="58" y="${20 - h / 2}" width="18" height="${h}" rx="2" fill="#c3c7cf" stroke="#8b9099" stroke-width=".6"/>`;
+    const BRISTLE = 'stroke="#8a7a66" stroke-width=".6"';
+    const TOOL_ART = {
+      FLAT_BRUSH:   HANDLE + FERRULE() + `<path d="M76 14 L100 12 Q106 20 100 28 L76 26 Z" fill="#efe4d2" ${BRISTLE}/>`,
+      SMALL_BRUSH:  HANDLE + FERRULE(10) + `<path d="M76 16 L94 18.5 Q98 20 94 21.5 L76 24 Z" fill="#efe4d2" ${BRISTLE}/>`,
+      FLUFFY_BRUSH: HANDLE + FERRULE(16) + `<ellipse cx="93" cy="20" rx="18" ry="15" fill="#c9a27e" ${BRISTLE}/>`,
+      ANGLED_BRUSH: HANDLE + FERRULE(14) + `<path d="M76 13 L101 9 L92 31 L76 27 Z" fill="#b08a6a" ${BRISTLE}/>`,
+      SPONGE: '<path d="M18 20 C18 7, 42 4, 70 12 C86 16, 86 24, 70 28 C42 36, 18 33, 18 20 Z" fill="#f28fad" stroke="#c9607f" stroke-width=".8"/>' +
+              '<path d="M34 14 C44 11, 56 11, 66 14" fill="none" stroke="#fff" stroke-opacity=".5" stroke-width="2" stroke-linecap="round"/>',
+      MASCARA_WAND: '<rect x="0" y="12" width="40" height="16" rx="4" fill="#1f1f22" stroke="var(--secondary)" stroke-width=".6"/><rect x="30" y="12" width="6" height="16" fill="#c9a24a"/>' +
+              '<line x1="40" y1="20" x2="84" y2="20" stroke="#8b9099" stroke-width="2"/><rect x="84" y="14" width="22" height="12" rx="5" fill="#1b1b1b"/>' +
+              Array.from({ length: 6 }, (_, i) => `<line x1="${86 + i * 3.6}" y1="12" x2="${86 + i * 3.6}" y2="28" stroke="#1b1b1b" stroke-width="1.2"/>`).join(''),
+      BULLET: '<rect x="0" y="9" width="58" height="22" rx="3" fill="#2a2a2e" stroke="var(--secondary)" stroke-width=".6"/><rect x="50" y="9" width="8" height="22" fill="#c9a24a"/>' +
+              '<path d="M58 12 H84 L98 28 H58 Z" fill="#b3263e" stroke="#7d1426" stroke-width=".6"/>',
+      FINGERS: '<rect x="8" y="7" width="84" height="12" rx="6" fill="#e0ac8a" stroke="#b98463" stroke-width=".8"/><ellipse cx="85" cy="13" rx="4" ry="3.2" fill="#f3d3c2"/>' +
+               '<rect x="8" y="22" width="92" height="12" rx="6" fill="#e0ac8a" stroke="#b98463" stroke-width=".8"/><ellipse cx="93" cy="28" rx="4" ry="3.2" fill="#f3d3c2"/>',
+    };
 
     const FAMILY_COLOR = { SURFACE_HEALTH: 'var(--pm-surface)', FEATURE_SALIENCE: 'var(--pm-salience)', GEOMETRY_PROPORTION: 'var(--pm-geometry)' };
     const { FACE, LIPS, LAYERS: ART, GHOST } = window.MakeupFace; // ART[0] is bare skin, ART[i] is layer i
@@ -141,6 +162,7 @@
     const text = (x, y, str, attrs = {}, parent = svg) => { const t = el('text', { x, y, ...attrs }, parent); t.textContent = str; return t; };
 
     text(BAT_X, 22, 'BATS  (why)', { class: 'pm-head' });
+    text(BAT_X, 330, 'TOOLS  (with)', { class: 'pm-head' });
     text(TX0 + 3 * STEP + SX * 100, 404, 'LAYERS  (when)  +  FACE_REGIONS  (where)', { class: 'pm-head', 'text-anchor': 'middle' });
 
     // Panes, back to front. Pane 0 is bare skin; pane i is layer i.
@@ -167,6 +189,7 @@
 
     // BAT cards and links to the regions on the lifted pane
     const batLayer = el('g');
+    const toolLayer = el('g');
     const links = el('g', { class: 'pm-links' });
     const caption = root.querySelector('.pm-caption');
     let buttons = [];
@@ -194,7 +217,7 @@
       batLayer.replaceChildren();
       links.replaceChildren();
       const n = product.bats.length, H = 50, GAP = 16;
-      const top = 230 - (n * H + (n - 1) * GAP) / 2;
+      const top = 200 - (n * H + (n - 1) * GAP) / 2;
       product.bats.forEach((batName, i) => {
         const bat = BATS[batName], color = FAMILY_COLOR[bat.family];
         const y = top + i * (H + GAP), cy = y + H / 2;
@@ -210,6 +233,15 @@
           el('path', { class: 'pm-link', style: `--c: ${color}`, d: `M${x0} ${cy} C ${x0 + 50} ${cy}, ${ax - 50} ${ay}, ${ax} ${ay}` }, links);
           el('circle', { class: 'pm-dot', style: `--c: ${color}`, cx: ax, cy: ay, r: 2.6 }, links);
         });
+      });
+
+      // Tools, side by side under the BATs
+      toolLayer.replaceChildren();
+      (product.tools || []).forEach((tool, i) => {
+        const x = BAT_X + i * 136;
+        const g = el('g', { transform: `translate(${x} 340)` }, toolLayer);
+        g.innerHTML = TOOL_ART[tool] || '';
+        text(x + 55, 396, tool, { class: 'pm-mono pm-tool-name', 'text-anchor': 'middle' }, toolLayer);
       });
 
       // Links appear once the pane has finished rising

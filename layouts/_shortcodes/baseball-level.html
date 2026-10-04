@@ -1,0 +1,25 @@
+{{- /*
+  One level of the baseball state machine on its own (not clickable), for introducing each level
+  before the combined, nested chart.
+  Usage in a post: {{< baseball-level level="pa" >}}   (level: pa | half | game)
+  The drawings are shared with baseball-statechart via layouts/_partials/baseball-sm/.
+*/ -}}
+{{- $level := .Get "level" -}}
+{{- $info := dict
+  "pa"   (dict "title" "Plate appearance" "state" "balls, strikes" "caption" "A strike is called or swinging. With 2 strikes, a foul doesn't change the count.")
+  "half" (dict "title" "Half inning" "state" "outs, runs" "caption" "Each plate appearance ends with k outs and r runs. Where those come from is baserunning (Baseball II). Walk-off: the home team takes the lead in the bottom of the 9th or later.")
+  "game" (dict "title" "Game" "state" "inning, score" "caption" "Each half of an inning is one run of the half-inning machine: the away team bats in the top, the home team in the bottom.")
+-}}
+{{- $l := index $info $level -}}
+{{- if not $l }}{{ errorf "baseball-level: level must be pa, half or game (got %q) in %s" $level .Position }}{{ end -}}
+{{ partial "baseball-sm/styles.html" . }}
+<div class="sc-root">
+  <section class="sc-level">
+    <div class="sc-head sc-mini-head">
+      <strong>{{ $l.title }}</strong><span>state: {{ $l.state }}</span>
+      <div class="sc-key"><span class="c">event [condition]</span><span class="u">update</span></div>
+    </div>
+    {{ partial (printf "baseball-sm/%s.html" $level) (dict "arrow" (printf "sc-arrow-mini-%s-%d" $level .Ordinal) "interactive" false) }}
+    <p class="sc-caption">{{ $l.caption }}</p>
+  </section>
+</div>

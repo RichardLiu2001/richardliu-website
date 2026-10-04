@@ -7,11 +7,81 @@ Have you ever watched baseball, looked at the scoreboard, and asked yourself "wh
 ![scoreboard](https://preview.redd.it/what-does-the-stuff-in-the-scoreboard-mean-v0-vujgcs8j7lrc1.jpeg?auto=webp&s=d701ec7c4416a200c3a207cfa169746a6b5a4a9d)
 ![scoreboard](https://keepthescore.com/static/images/blog_images/baseball-scoreboard-detailed.jpg)
 
-{{< scoreboard-sync >}}
+The reason why baseball seems complicated is . Today I will explain.
+
+## 1. Baseball is a Triply-Nested State Machine
+The game structure of baseball is really just three nested state machines:
+| - GAME 
+  --- HALF_INNING
+    --- PLATE_APPEARANCE
+where the conclusion of one state machine ripples upwards and updates the state of the parent state machine.
+
+### 1a. The Game State Machine
+Let's define:
+**Half-Inning**: A period where one team is on offense and the other is on defense. The offense tries to score as many runs (points) as possible before the half-inning is concluded. (Will explain how it concludes later).
+**Inning**: A pair of sequential half-innings where each team is offense/defense.
+- The AWAY team is on offense during the first half-inning of inning N is called "Top of the Nth", e.g Top of the Third.
+- The HOME team is on offense during the second half-inning, which is called "Bottom of the Nth".
+
+A typical game of baseball is made up of 9 innings, with the 18th half-inning (bottom of the 9th) skipped if the home team leads at the conclusion of the 17th (top of the 9th). 
+- Extra innings (overtime): if the score is tied after 9 full innings, we just continue playing full innings until one team leads at the conclusion of the full inning.
+
+```python
+def baseball():
+    home_team_runs, away_team_runs = 0, 0
+    for inning in range(1, 10):
+        away_team_runs += half_inning(batting_team="AWAY")
+        if inning == 9 and home_team_runs > away_team_runs:
+            return "HOME_TEAM_WINS" # bottom of the 9th is skipped if the home team already leads.
+        home_team_runs += half_inning(batting_team="HOME")
+    while home_team_runs == away_team_runs: # extra innings
+        away_team_runs += half_inning(batting_team="AWAY")
+        home_team_runs += half_inning(batting_team="HOME")
+    return "HOME_TEAM_WINS" if home_team_runs > away_team_runs else "AWAY_TEAM_WINS"
+```
+{{< baseball-level level="game" >}}
+
+### 1b. The Half-Inning State Machine
+Let's define:
+**Plate appearance**: an offensive player's turn to try to hit the ball thrown by the pitcher. Will describe what ends a plate appearance later.
+**Out**: the defense successfully retiring (killing) an offensive player. (Will explain how outs are obtained in 1c).
+A half-inning is simply an infinite sequence of plate appearances until three outs are reached.
+
+```python
+def half_inning(batting_team):
+    outs, runs = 0, 0
+    while outs < 3:
+        outs_recorded, runs_scored = baserunning(plate_appearance()) # see Baseball II
+        outs += outs_recorded
+        runs += runs_scored
+    return runs
+```
+{{< baseball-level level="half" >}}
+
+### 1c. The Plate Appearance State Machine
+Let's define:
+
+**Pitch**: the action of the pitcher throwing the ball to the batter.
+
+**Strike**: a pitch that is ruled as an advantage to the pitcher
+
+**Ball (Pitch outcome)**: a pitch that is ruled as an advantage to the batter. Not to be confused with the physical baseball.
+
+**Batted Ball**: a pitch that made contact with the batter's bat
+ - **Fair ball**: in play, i.e lands between the white lines. Can result in an out or no out.
+ - **Foul ball**: out of play
+
+**Hit**: fair ball and the batter is not out (mechanism to be described in baseball II). Here we're going to call errors the same as hits, functionally.
+**Strikeout**: 3 strikes are reached. Results in the batter being retired. Foul balls count as +1 strike unless there are 2 strikes.
+**Base on Balls (Walk)**: 4 balls are reached. Results in the batter advancing.
+**Hit By Pitch**: pitch hits the batter's body. Results in the batter advancing.
+
+
+{{< baseball-level level="pa" >}}
 
 ### The State Machine
 {{< baseball-statechart >}}
-
+{{< scoreboard-sync >}}
 ### Try It
 {{< count-simulator >}}
 
