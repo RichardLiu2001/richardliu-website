@@ -1,0 +1,442 @@
+{{- /*
+  The "Makeup Oracle": ask an informal question, see it compiled to SQL over the post's tables, and see the
+  one-row answer that SQL returns. Two directions: what does a product/tool do (MAKEUP or TOOLS -> everything
+  it references), and how do I get a BAT (BATS -> the MAKEUP rows whose BATS[] contain it).
+  Each query has one fixed SQL template; the selection is only inserted as the WHERE literal. The answer is
+  computed by run* functions that mirror their template step by step (STRING_AGG over rows in table order,
+  || propagating NULL, CONCAT skipping NULL), so the shown result is what the shown SQL would return.
+  Usage in a post: {{< makeup-oracle >}}
+  Data is copied from the tables in makeup.md; update both together.
+*/ -}}
+<style>
+  .mo-root {
+    --mo-accent: #2563eb;
+    --mo-kw: #cf222e; --mo-fn: #6639ba; --mo-str: #0a3069; --mo-num: #0550ae; --mo-op: #0550ae; --mo-txt: #1f2328;
+    --mo-lit-bg: #fff1a8; --mo-lit-fg: #1f2328;
+    margin: 0 0 var(--content-gap);
+    color: var(--primary);
+  }
+  :root[data-theme="dark"] .mo-root {
+    --mo-accent: #60a5fa;
+    --mo-kw: #66d9ef; --mo-fn: #a6e22e; --mo-str: #e6db74; --mo-num: #ae81ff; --mo-op: #f92672; --mo-txt: #f8f8f2;
+    --mo-lit-bg: #e6db74; --mo-lit-fg: #272822;
+  }
+  .mo-root * { box-sizing: border-box; }
+  .mo-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .mo-panel { border: 1px solid var(--tertiary); border-radius: var(--radius); background: var(--entry); padding: 12px 16px 14px; }
+  .mo-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .mo-label { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: var(--secondary); }
+  .mo-label::before {
+    content: attr(data-n); display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+    font-size: 11px; letter-spacing: 0; background: var(--primary); color: var(--theme);
+  }
+  .mo-status { font-size: 12px; color: var(--secondary); }
+  .mo-busy .mo-status { color: var(--mo-accent); }
+
+  /* ASK */
+  .mo-modes { display: inline-flex; border: 1.5px solid var(--tertiary); border-radius: 999px; padding: 2px; margin-bottom: 12px; max-width: 100%; }
+  .mo-modes button {
+    font: inherit; font-size: 12px; font-weight: 700; letter-spacing: 0.03em; cursor: pointer; white-space: nowrap;
+    color: var(--secondary); background: none; border: 0; border-radius: 999px; padding: 5px 12px;
+  }
+  .mo-modes button[aria-pressed="true"] { background: var(--primary); color: var(--theme); }
+  .mo-modes button:focus-visible, .mo-root select:focus-visible { outline: 2px solid var(--mo-accent); outline-offset: 2px; }
+  .mo-question { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.7; }
+  .mo-question[hidden] { display: none; }
+  .mo-root select {
+    appearance: none; -webkit-appearance: none; field-sizing: content; max-width: 100%;
+    font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 700;
+    color: var(--primary); background-color: var(--theme); cursor: pointer; vertical-align: 2px;
+    border: 1.5px solid var(--primary); border-radius: 6px; padding: 3px 28px 3px 9px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 9px center;
+  }
+  .mo-root select option, .mo-root select optgroup { color: initial; background: initial; }
+
+  /* Connectors */
+  .mo-link { display: flex; align-items: center; gap: 8px; height: 40px; padding-left: 26px; font-size: 12px; color: var(--secondary); }
+  .mo-link svg { flex: none; overflow: visible; }
+  .mo-link path { fill: none; stroke: var(--tertiary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: stroke .2s; }
+  .mo-link.on path { stroke: var(--mo-accent); }
+  .mo-link.on .mo-wire { stroke-dasharray: 4 4; animation: mo-flow .45s linear infinite; }
+  @keyframes mo-flow { from { stroke-dashoffset: 8; } to { stroke-dashoffset: 0; } }
+
+  /* COMPILE */
+  .mo-compile { background: var(--code-block-bg); }
+  .mo-sql {
+    margin: 0; padding: 0; background: none; border: 0; color: var(--mo-txt);
+    font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: break-word;
+    transition: opacity .15s ease;
+  }
+  .mo-busy .mo-sql, .mo-busy .mo-answer { opacity: 0.3; }
+  /* One block per SQL line: --i is its indent in spaces; wrapped continuations hang 4ch further in */
+  .mo-ln { --ind: 1ch; display: block; padding-left: calc(var(--i) * var(--ind) + 4ch); text-indent: -4ch; }
+  .mo-kw { color: var(--mo-kw); font-weight: 600; }
+  .mo-fn { color: var(--mo-fn); }
+  .mo-str { color: var(--mo-str); }
+  .mo-num { color: var(--mo-num); }
+  .mo-op { color: var(--mo-op); }
+  .mo-tbl { font-weight: 700; }
+  .mo-lit { background: var(--mo-lit-bg); color: var(--mo-lit-fg); font-weight: 700; border-radius: 3px; padding: 1px 3px; }
+  .mo-lit.mo-flash { animation: mo-flash .7s ease-out; }
+  @keyframes mo-flash { from { box-shadow: 0 0 0 4px var(--mo-accent); } to { box-shadow: 0 0 0 0 transparent; } }
+
+  /* RESULT: laid out like psql output */
+  .mo-col { font-size: 12.5px; font-weight: 700; color: var(--secondary); padding-bottom: 4px; border-bottom: 1px solid var(--tertiary); }
+  .mo-answer { margin: 10px 0 8px; font-size: 17px; line-height: 1.6; transition: opacity .15s ease; }
+  .mo-answer.mo-in { animation: mo-in .35s ease-out; }
+  @keyframes mo-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  .mo-rows { font-size: 12px; color: var(--secondary); }
+
+  @media (max-width: 600px) {
+    .mo-panel { padding: 10px 12px 12px; }
+    .mo-question { font-size: 17px; }
+    .mo-root select { font-size: 14px; }
+    .mo-modes button { font-size: 11px; padding: 5px 9px; }
+    .mo-sql { font-size: 11.5px; }
+    .mo-ln { --ind: 0.5ch; }
+    .mo-answer { font-size: 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mo-link.on .mo-wire, .mo-lit.mo-flash, .mo-answer.mo-in { animation: none; }
+  }
+</style>
+
+<div class="mo-root">
+  <section class="mo-panel mo-ask">
+    <div class="mo-head"><span class="mo-label" data-n="1">ASK</span></div>
+    <div class="mo-modes" role="group" aria-label="Question type">
+      <button type="button" data-mode="does" aria-pressed="true">WHAT DOES THIS DO?</button>
+      <button type="button" data-mode="get" aria-pressed="false">HOW DO I GET THIS?</button>
+    </div>
+    <p class="mo-question" data-mode="does">What the fuck does <select aria-label="Product or tool"></select> do?</p>
+    <p class="mo-question" data-mode="get" hidden>How the fuck do I get <select aria-label="Beauty aesthetic target"></select>?</p>
+  </section>
+
+  <div class="mo-link" aria-hidden="true">
+    <svg width="16" height="40" viewBox="0 0 16 40"><path class="mo-wire" d="M8 2 V34"/><path d="M3 29 L8 35 L13 29"/></svg>
+    <span>compiles to</span>
+  </div>
+
+  <section class="mo-panel mo-compile">
+    <div class="mo-head"><span class="mo-label" data-n="2">COMPILE</span><span class="mo-status mo-mono"></span></div>
+    <pre class="mo-sql mo-mono"></pre>
+  </section>
+
+  <div class="mo-link" aria-hidden="true">
+    <svg width="16" height="40" viewBox="0 0 16 40"><path class="mo-wire" d="M8 2 V34"/><path d="M3 29 L8 35 L13 29"/></svg>
+    <span>returns</span>
+  </div>
+
+  <section class="mo-panel mo-result">
+    <div class="mo-head"><span class="mo-label" data-n="3">RESULT</span><span class="mo-status mo-mono"></span></div>
+    <div class="mo-col mo-mono">answer</div>
+    <p class="mo-answer" aria-live="polite"></p>
+    <div class="mo-rows mo-mono"></div>
+  </section>
+</div>
+
+<script>
+  (() => {
+    // ---- Data (from the tables in makeup.md): edit here -----------------------
+    // Rows are in table order, which is the order STRING_AGG sees them in.
+    const BATS = [
+      { bat: 'EVEN_SKIN_TONE', family: 'SURFACE_HEALTH', regions: ['GENERAL_FACE_SKIN'], description: 'Skin coloration appears more uniform' },
+      { bat: 'SMOOTH_LOOKING_SKIN', family: 'SURFACE_HEALTH', regions: ['GENERAL_FACE_SKIN'], description: 'Skin surface appears smoother / less texturally irregular' },
+      { bat: 'HEALTHY_CHEEK_FLUSH', family: 'SURFACE_HEALTH', regions: ['CHEEKS'], description: 'Cheeks have a preferred reddish/pink coloration' },
+      { bat: 'REDUCED_UNDER_EYE_DARKNESS', family: 'SURFACE_HEALTH', regions: ['UNDER_EYES'], description: 'Under-eye region appears less dark/discolored' },
+      { bat: 'SUN_KISSED_WARMTH', family: 'SURFACE_HEALTH', regions: ['FOREHEAD', 'CHEEKS', 'NOSE', 'JAW'], description: 'Skin appears warmer / lightly tanned, as if from sun exposure' },
+      { bat: 'FAIR_BRIGHT_COMPLEXION', family: 'SURFACE_HEALTH', regions: ['GENERAL_FACE_SKIN'], description: 'Skin appears lighter and brighter overall' },
+      { bat: 'PROMINENT_EYES', family: 'FEATURE_SALIENCE', regions: ['EYES_EYELIDS', 'LASHES'], description: 'Eyes stand out more strongly from the surrounding face' },
+      { bat: 'DEFINED_BROWS', family: 'FEATURE_SALIENCE', regions: ['BROWS'], description: 'Brows appear clearer and more visually defined' },
+      { bat: 'VISIBLE_LASHES', family: 'FEATURE_SALIENCE', regions: ['LASHES'], description: 'Eyelashes appear more noticeable' },
+      { bat: 'PROMINENT_LIPS', family: 'FEATURE_SALIENCE', regions: ['LIPS'], description: 'Lips stand out more strongly from surrounding skin' },
+      { bat: 'LARGER_EYES', family: 'GEOMETRY_PROPORTION', regions: ['EYES_EYELIDS'], description: 'Eyes appear larger' },
+      { bat: 'LIFTED_ELONGATED_EYES', family: 'GEOMETRY_PROPORTION', regions: ['EYES_EYELIDS'], description: 'Eyes appear more elongated and/or lifted' },
+      { bat: 'FULLER_LIPS', family: 'GEOMETRY_PROPORTION', regions: ['LIPS'], description: 'Lips appear fuller/larger' },
+      { bat: 'NARROWER_DEFINED_NOSE', family: 'GEOMETRY_PROPORTION', regions: ['NOSE'], description: 'Nose appears narrower or more structurally defined' },
+      { bat: 'PROMINENT_CHEEKBONES', family: 'GEOMETRY_PROPORTION', regions: ['CHEEKS'], description: 'Cheekbone structure appears more prominent' },
+      { bat: 'DEFINED_JAW', family: 'GEOMETRY_PROPORTION', regions: ['JAW', 'CHIN'], description: 'Jawline/chin boundary appears more structurally defined' },
+    ];
+    const FACE_REGIONS = ['FOREHEAD', 'TEMPLES', 'BROWS', 'EYES_EYELIDS', 'LASHES', 'UNDER_EYES', 'NOSE', 'CHEEKS', 'JAW', 'CHIN', 'LIPS', 'GENERAL_FACE_SKIN']
+      .map((region) => ({ region })); // row order from face-regions.html
+    const APPEARANCE_CHANGES = [
+      { appearance_change: 'COLOR', description: 'Change hue, saturation, or lightness' },
+      { appearance_change: 'OPACITY', description: 'Change how much underlying skin/feature is visible' },
+      { appearance_change: 'FINISH', description: 'Change matte/glossy/shimmer/dewy appearance' },
+    ];
+    const STRUCTURE_CHANGES = [
+      { structure_change: 'LENGTH', description: 'Make hairs/fibers longer' },
+      { structure_change: 'THICKNESS', description: 'Make individual hairs appear/become thicker' },
+      { structure_change: 'DENSITY', description: 'Increase apparent amount of hair' },
+      { structure_change: 'ORIENTATION', description: 'Change direction/curl/position' },
+      { structure_change: 'ADD_MATERIAL', description: 'Add lashes, fibers, etc.' },
+    ];
+    const LAYERS = [
+      { layer: 'PREP', description: 'primer', typical_priority: 1 },
+      { layer: 'COMPLEXION_BASE', description: 'foundation, skin tint, BB/CC cream, tone-up cream', typical_priority: 2 },
+      { layer: 'LOCAL_CORRECTION', description: 'concealer, color corrector', typical_priority: 3 },
+      { layer: 'FACE_DIMENSION_COLOR', description: 'blush, bronzer, contour, highlighter', typical_priority: 4 },
+      { layer: 'FEATURE_MAKEUP', description: 'eyeshadow, eyeliner, mascara, false lashes, brow products, lipstick, lip liner', typical_priority: 5 },
+      { layer: 'FINISH_SET', description: 'setting powder, finishing powder, setting spray, some gloss/topper products', typical_priority: 6 },
+    ];
+    const TOOLS = [
+      { tool: 'BRUSH', description: 'Applies and blends powders, creams, or liquids' },
+      { tool: 'SPONGE', description: 'Applies and blends complexion products by pressing/dabbing' },
+      { tool: 'POWDER_PUFF', description: 'Presses powder onto the skin' },
+      { tool: 'SPOOLIE', description: 'Brushes and arranges brow or lash hairs' },
+      { tool: 'EYELASH_CURLER', description: 'Physically curls eyelashes' },
+      { tool: 'TWEEZERS', description: 'Grips individual hairs or false lashes' },
+    ];
+    const FORMULATIONS = [
+      { formulation: 'POWDER', description: 'Dry particles, loose or pressed' },
+      { formulation: 'LIQUID', description: 'Flowing liquid' },
+      { formulation: 'CREAM', description: 'Thick, spreadable semi-solid/emulsion' },
+      { formulation: 'GEL', description: 'Gel-like, semi-solid' },
+      { formulation: 'BALM', description: 'Soft waxy/oily semi-solid' },
+      { formulation: 'WAX', description: 'Firmer wax-based formulation, common in brow/lip products' },
+      { formulation: 'SOLID', description: 'Solid cosmetic material, e.g. traditional lipstick or pencil core' },
+    ];
+    // [product, description, bats, layers, formulations, tools, appearance_changes, structure_changes]
+    const MAKEUP = [
+      ['PRIMER', 'Prepares skin for later makeup', ['SMOOTH_LOOKING_SKIN'], ['PREP'], ['LIQUID', 'CREAM', 'GEL'], ['BRUSH', 'SPONGE'], ['FINISH'], []],
+      ['FOUNDATION', 'Broadly evens facial skin appearance', ['EVEN_SKIN_TONE', 'SMOOTH_LOOKING_SKIN'], ['COMPLEXION_BASE'], ['LIQUID', 'CREAM', 'POWDER', 'SOLID'], ['BRUSH', 'SPONGE', 'POWDER_PUFF'], ['COLOR', 'OPACITY', 'FINISH'], []],
+      ['SKIN_TINT', 'Lightweight complexion evening', ['EVEN_SKIN_TONE'], ['COMPLEXION_BASE'], ['LIQUID', 'CREAM'], ['BRUSH', 'SPONGE'], ['COLOR', 'OPACITY'], []],
+      ['TONE_UP_CREAM', 'Lightly tinted cream that lightens and brightens overall complexion', ['FAIR_BRIGHT_COMPLEXION'], ['COMPLEXION_BASE'], ['CREAM'], ['BRUSH', 'SPONGE'], ['COLOR'], []],
+      ['CONCEALER', 'Locally hides discoloration or darkness', ['EVEN_SKIN_TONE', 'REDUCED_UNDER_EYE_DARKNESS'], ['LOCAL_CORRECTION'], ['LIQUID', 'CREAM', 'SOLID'], ['BRUSH', 'SPONGE'], ['COLOR', 'OPACITY'], []],
+      ['COLOR_CORRECTOR', 'Uses compensating color to reduce visible discoloration', ['EVEN_SKIN_TONE', 'REDUCED_UNDER_EYE_DARKNESS'], ['LOCAL_CORRECTION'], ['LIQUID', 'CREAM', 'SOLID'], ['BRUSH', 'SPONGE'], ['COLOR', 'OPACITY'], []],
+      ['BLUSH', 'Adds reddish/pink coloration to cheeks', ['HEALTHY_CHEEK_FLUSH'], ['FACE_DIMENSION_COLOR'], ['POWDER', 'CREAM', 'LIQUID', 'SOLID'], ['BRUSH', 'SPONGE'], ['COLOR'], []],
+      ['BRONZER', 'Adds warmer/darker coloration to selected facial regions', ['SUN_KISSED_WARMTH'], ['FACE_DIMENSION_COLOR'], ['POWDER', 'CREAM', 'LIQUID', 'SOLID'], ['BRUSH', 'SPONGE'], ['COLOR'], []],
+      ['CONTOUR', 'Adds strategic darkness to alter apparent facial geometry', ['PROMINENT_CHEEKBONES', 'NARROWER_DEFINED_NOSE', 'DEFINED_JAW'], ['FACE_DIMENSION_COLOR'], ['POWDER', 'CREAM', 'LIQUID', 'SOLID'], ['BRUSH', 'SPONGE'], ['COLOR'], []],
+      ['HIGHLIGHTER', 'Adds brightness and/or reflectivity to selected regions', ['PROMINENT_CHEEKBONES', 'PROMINENT_EYES'], ['FACE_DIMENSION_COLOR'], ['POWDER', 'CREAM', 'LIQUID', 'SOLID'], ['BRUSH', 'SPONGE'], ['COLOR', 'FINISH'], []],
+      ['EYESHADOW', 'Changes coloration around the eyes', ['PROMINENT_EYES', 'LARGER_EYES', 'LIFTED_ELONGATED_EYES'], ['FEATURE_MAKEUP'], ['POWDER', 'CREAM', 'LIQUID', 'SOLID'], ['BRUSH'], ['COLOR', 'OPACITY', 'FINISH'], []],
+      ['EYELINER', 'Adds a defined line around the eye', ['PROMINENT_EYES', 'LARGER_EYES', 'LIFTED_ELONGATED_EYES'], ['FEATURE_MAKEUP'], ['LIQUID', 'GEL', 'SOLID'], ['BRUSH'], ['COLOR', 'OPACITY'], []],
+      ['MASCARA', 'Darkens and alters eyelashes', ['VISIBLE_LASHES', 'PROMINENT_EYES'], ['FEATURE_MAKEUP'], ['LIQUID', 'GEL', 'WAX'], ['SPOOLIE', 'EYELASH_CURLER'], ['COLOR'], ['THICKNESS', 'LENGTH', 'ORIENTATION']],
+      ['FALSE_LASHES', 'Adds artificial lash material', ['VISIBLE_LASHES', 'PROMINENT_EYES', 'LARGER_EYES'], ['FEATURE_MAKEUP'], [], ['TWEEZERS', 'EYELASH_CURLER'], [], ['ADD_MATERIAL', 'LENGTH', 'DENSITY']],
+      ['BROW_PENCIL', 'Adds color/definition to brows', ['DEFINED_BROWS'], ['FEATURE_MAKEUP'], ['SOLID', 'WAX'], ['SPOOLIE'], ['COLOR', 'OPACITY'], []],
+      ['BROW_GEL', 'Colors and/or holds brow hairs in position', ['DEFINED_BROWS'], ['FEATURE_MAKEUP'], ['GEL', 'WAX'], ['SPOOLIE'], ['COLOR'], ['ORIENTATION']],
+      ['LIPSTICK', 'Changes lip coloration and prominence', ['PROMINENT_LIPS'], ['FEATURE_MAKEUP'], ['SOLID', 'LIQUID', 'CREAM', 'BALM'], ['BRUSH'], ['COLOR', 'OPACITY', 'FINISH'], []],
+      ['LIP_LINER', 'Defines or extends the visible lip boundary', ['PROMINENT_LIPS', 'FULLER_LIPS'], ['FEATURE_MAKEUP'], ['SOLID', 'WAX'], [], ['COLOR', 'OPACITY'], []],
+      ['LIP_GLOSS', 'Adds a glossy/reflective lip finish', ['PROMINENT_LIPS', 'FULLER_LIPS'], ['FEATURE_MAKEUP', 'FINISH_SET'], ['LIQUID', 'GEL'], ['BRUSH'], ['FINISH'], []],
+      ['SETTING_POWDER', 'Reduces shine and helps set complexion products', ['SMOOTH_LOOKING_SKIN'], ['FINISH_SET'], ['POWDER'], ['BRUSH', 'POWDER_PUFF'], ['FINISH', 'OPACITY'], []],
+      ['SETTING_SPRAY', 'Alters final finish and helps makeup persist', [], ['FINISH_SET'], ['LIQUID'], [], ['FINISH'], []],
+    ].map(([product, description, bats, layers, formulations, tools, appearance_changes, structure_changes]) =>
+      ({ product, description, bats, layers, formulations, tools, appearance_changes, structure_changes }));
+    // ----------------------------------------------------------------------------
+
+    // SQL semantics the run* functions need, so each mirrors its template line for line
+    const words = (k) => k.replace(/_/g, ' ');                                                  // REPLACE(k, '_', ' ')
+    const lower = (s) => s.toLowerCase();                                                        // LOWER(s)
+    const initcap = (s) => s.toLowerCase().replace(/(^|[^a-z0-9])([a-z])/g, (_, a, b) => a + b.toUpperCase()); // INITCAP(s)
+    const agg = (xs, sep) => (xs.length ? xs.join(sep) : null);                                  // STRING_AGG: NULL over no rows
+    const cat = (...xs) => (xs.includes(null) ? null : xs.join(''));                             // a || b: NULL if any is NULL
+    const concat = (...xs) => xs.filter((x) => x !== null).join('');                             // CONCAT: skips NULLs
+    const coalesce = (a, b) => (a === null ? b : a);
+    const anyOf = (table, key, arr) => table.filter((r) => arr.includes(r[key]));                // WHERE r.KEY = ANY(arr)
+
+    // ---- Queries: SQL template + an evaluator that returns its single row (or null for no rows) ----
+    const PRODUCT_SQL = (v) => `SELECT CONCAT(
+    INITCAP(REPLACE(M.PRODUCT, '_', ' ')),
+    COALESCE(
+        (SELECT ' is used so that '
+                || STRING_AGG(LOWER(B.DESCRIPTION), ' and ') || '.'
+         FROM BATS B WHERE B.BAT = ANY(M.BATS)),
+        ' targets no BAT.'),
+    (SELECT ' It goes on in the '
+            || STRING_AGG(LOWER(REPLACE(L.LAYER, '_', ' '))
+               || ' layer (step ' || L.TYPICAL_PRIORITY || ')', ' and the ')
+            || '.'
+     FROM LAYERS L WHERE L.LAYER = ANY(M.LAYERS)),
+    (SELECT ' It is applied with: '
+            || STRING_AGG(LOWER(REPLACE(T.TOOL, '_', ' ')), ', ') || '.'
+     FROM TOOLS T WHERE T.TOOL = ANY(M.TOOLS)),
+    (SELECT ' It comes as: '
+            || STRING_AGG(LOWER(F.FORMULATION), ', ') || '.'
+     FROM FORMULATIONS F WHERE F.FORMULATION = ANY(M.FORMULATIONS)),
+    (SELECT ' It alters the '
+            || STRING_AGG(LOWER(A.APPEARANCE_CHANGE), ', ')
+            || COALESCE(' of: ' || (
+                   SELECT STRING_AGG(LOWER(REPLACE(R.REGION, '_', ' ')), ', ')
+                   FROM FACE_REGIONS R
+                   WHERE R.REGION IN (SELECT UNNEST(B.FACE_REGIONS)
+                                      FROM BATS B WHERE B.BAT = ANY(M.BATS))), '')
+            || '.'
+     FROM APPEARANCE_CHANGES A
+     WHERE A.APPEARANCE_CHANGE = ANY(M.APPEARANCE_CHANGES)),
+    (SELECT ' It physically alters: '
+            || STRING_AGG(LOWER(REPLACE(S.STRUCTURE_CHANGE, '_', ' ')), ', ') || '.'
+     FROM STRUCTURE_CHANGES S
+     WHERE S.STRUCTURE_CHANGE = ANY(M.STRUCTURE_CHANGES))
+) AS ANSWER
+FROM MAKEUP M
+WHERE M.PRODUCT = '${v}';`;
+    const runProduct = (v) => {
+      const m = MAKEUP.find((r) => r.product === v);
+      if (!m) return null;
+      return concat(
+        initcap(words(m.product)),
+        coalesce(
+          cat(' is used so that ', agg(anyOf(BATS, 'bat', m.bats).map((b) => lower(b.description)), ' and '), '.'),
+          ' targets no BAT.'),
+        cat(' It goes on in the ',
+          agg(anyOf(LAYERS, 'layer', m.layers).map((l) => cat(lower(words(l.layer)), ' layer (step ', l.typical_priority, ')')), ' and the '),
+          '.'),
+        cat(' It is applied with: ', agg(anyOf(TOOLS, 'tool', m.tools).map((t) => lower(words(t.tool))), ', '), '.'),
+        cat(' It comes as: ', agg(anyOf(FORMULATIONS, 'formulation', m.formulations).map((f) => lower(f.formulation)), ', '), '.'),
+        cat(' It alters the ', agg(anyOf(APPEARANCE_CHANGES, 'appearance_change', m.appearance_changes).map((a) => lower(a.appearance_change)), ', '),
+          coalesce(cat(' of: ', agg(anyOf(FACE_REGIONS, 'region', anyOf(BATS, 'bat', m.bats).flatMap((b) => b.regions)).map((r) => lower(words(r.region))), ', ')), ''),
+          '.'),
+        cat(' It physically alters: ', agg(anyOf(STRUCTURE_CHANGES, 'structure_change', m.structure_changes).map((s) => lower(words(s.structure_change))), ', '), '.'),
+      );
+    };
+
+    const TOOL_SQL = (v) => `SELECT INITCAP(REPLACE(T.TOOL, '_', ' '))
+       || ': ' || LOWER(T.DESCRIPTION)
+       || '. It is used with: '
+       || STRING_AGG(LOWER(REPLACE(M.PRODUCT, '_', ' ')), ', ')
+       || '.' AS ANSWER
+FROM TOOLS T
+JOIN MAKEUP M ON T.TOOL = ANY(M.TOOLS)
+WHERE T.TOOL = '${v}'
+GROUP BY T.TOOL, T.DESCRIPTION;`;
+    const runTool = (v) => {
+      const t = TOOLS.find((r) => r.tool === v);
+      const joined = t ? MAKEUP.filter((m) => m.tools.includes(t.tool)) : [];
+      if (!joined.length) return null; // inner join + GROUP BY: no matching products, no row
+      return cat(initcap(words(t.tool)), ': ', lower(t.description), '. It is used with: ',
+        agg(joined.map((m) => lower(words(m.product))), ', '), '.');
+    };
+
+    const BAT_SQL = (v) => `SELECT 'To get ' || LOWER(REPLACE(B.BAT, '_', ' '))
+       || ' (' || LOWER(B.DESCRIPTION) || '), use: '
+       || STRING_AGG(LOWER(REPLACE(M.PRODUCT, '_', ' '))
+                     || ' (' || LOWER(M.DESCRIPTION) || ')', ', ')
+       || '.' AS ANSWER
+FROM BATS B
+JOIN MAKEUP M ON B.BAT = ANY(M.BATS)
+WHERE B.BAT = '${v}'
+GROUP BY B.BAT, B.DESCRIPTION;`;
+    const runBat = (v) => {
+      const b = BATS.find((r) => r.bat === v);
+      const joined = b ? MAKEUP.filter((m) => m.bats.includes(b.bat)) : [];
+      if (!joined.length) return null;
+      return cat('To get ', lower(words(b.bat)), ' (', lower(b.description), '), use: ',
+        agg(joined.map((m) => cat(lower(words(m.product)), ' (', lower(m.description), ')')), ', '), '.');
+    };
+
+    // ---- SQL highlighting --------------------------------------------------------
+    const KEYWORDS = new Set(['SELECT', 'FROM', 'WHERE', 'JOIN', 'ON', 'AS', 'GROUP', 'BY', 'ANY', 'IN']);
+    const FUNCTIONS = new Set(['CONCAT', 'COALESCE', 'INITCAP', 'REPLACE', 'LOWER', 'STRING_AGG', 'UNNEST']);
+    const TABLES = new Set(['MAKEUP', 'FACE_REGIONS', 'BATS', 'LAYERS', 'TOOLS', 'FORMULATIONS', 'APPEARANCE_CHANGES', 'STRUCTURE_CHANGES']);
+    const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const TOKEN = /('(?:[^']|'')*')|(\|\|)|(\d+)|([A-Za-z_][A-Za-z_0-9]*)|([^'|\dA-Za-z_]+|\|)/g;
+    function highlight(sql, literal) {
+      return sql.split('\n').map((line) => {
+        const indent = line.length - line.trimStart().length;
+        // Keep each || with the operand after it, and allow breaks after '(' so long calls wrap between arguments
+        const html = line.trimStart().replace(/\|\| /g, '||\u00a0').replace(TOKEN, (tok, str, op, num, word) => {
+          if (str) return tok === literal ? `<mark class="mo-lit">${esc(tok)}</mark>` : `<span class="mo-str">${esc(tok)}</span>`;
+          if (op) return `<span class="mo-op">${tok}</span>`;
+          if (num) return `<span class="mo-num">${tok}</span>`;
+          if (word) {
+            if (KEYWORDS.has(word)) return `<span class="mo-kw">${word}</span>`;
+            if (FUNCTIONS.has(word)) return `<span class="mo-fn">${word}</span>`;
+            if (TABLES.has(word)) return `<span class="mo-tbl">${word}</span>`;
+          }
+          return esc(tok).replace(/\(/g, '(<wbr>');
+        });
+        return `<span class="mo-ln" style="--i:${indent}">${html || ' '}</span>`;
+      }).join('');
+    }
+
+    // ---- UI ------------------------------------------------------------------------
+    const root = document.currentScript.previousElementSibling;
+    const [doesSel, getSel] = root.querySelectorAll('select');
+    const modeButtons = root.querySelectorAll('.mo-modes button');
+    const questions = root.querySelectorAll('.mo-question');
+    const [compile, result] = [root.querySelector('.mo-compile'), root.querySelector('.mo-result')];
+    const [link1, link2] = root.querySelectorAll('.mo-link');
+    const sqlEl = root.querySelector('.mo-sql');
+    const answerEl = root.querySelector('.mo-answer');
+    const rowsEl = root.querySelector('.mo-rows');
+    const compileStatus = compile.querySelector('.mo-status');
+    const resultStatus = result.querySelector('.mo-status');
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const fill = (select, groups, initial) => {
+      for (const [label, values] of groups) {
+        const og = document.createElement('optgroup');
+        og.label = label;
+        for (const [value, text] of values) og.append(new Option(text, value, false, value === initial));
+        select.append(og);
+      }
+    };
+    fill(doesSel, [
+      ['PRODUCTS (MAKEUP)', MAKEUP.map((m) => ['MAKEUP:' + m.product, m.product])],
+      ['TOOLS', TOOLS.map((t) => ['TOOLS:' + t.tool, t.tool])],
+    ], 'MAKEUP:FOUNDATION');
+    const families = [...new Set(BATS.map((b) => b.family))];
+    fill(getSel, families.map((f) => [f, BATS.filter((b) => b.family === f).map((b) => [b.bat, b.bat])]), 'PROMINENT_CHEEKBONES');
+
+    let mode = 'does';
+    function compileQuery() {
+      if (mode === 'get') return { sql: BAT_SQL(getSel.value), literal: `'${getSel.value}'`, answer: runBat(getSel.value) };
+      const [table, v] = doesSel.value.split(':');
+      return table === 'TOOLS'
+        ? { sql: TOOL_SQL(v), literal: `'${v}'`, answer: runTool(v) }
+        : { sql: PRODUCT_SQL(v), literal: `'${v}'`, answer: runProduct(v) };
+    }
+
+    const showSql = (q, flash) => {
+      sqlEl.innerHTML = highlight(q.sql, q.literal);
+      compileStatus.textContent = 'compiled';
+      const lit = sqlEl.querySelector('.mo-lit');
+      if (flash && lit) lit.classList.add('mo-flash');
+    };
+    const showResult = (q, animate) => {
+      answerEl.textContent = q.answer ?? '';
+      rowsEl.textContent = q.answer === null ? '(0 rows)' : '(1 row)';
+      resultStatus.textContent = 'returned';
+      answerEl.classList.remove('mo-in');
+      if (animate) { void answerEl.offsetWidth; answerEl.classList.add('mo-in'); }
+    };
+
+    // On a change: question updates at once, the SQL panel "compiles" briefly, then the result arrives.
+    let timers = [];
+    function update(animate) {
+      timers.forEach(clearTimeout);
+      timers = [];
+      const q = compileQuery();
+      [compile, result].forEach((p) => p.classList.remove('mo-busy'));
+      [link1, link2].forEach((l) => l.classList.remove('on'));
+      if (!animate || reduceMotion) { showSql(q, false); showResult(q, false); return; }
+      compile.classList.add('mo-busy');
+      compileStatus.textContent = 'compiling…';
+      link1.classList.add('on');
+      timers.push(setTimeout(() => {
+        compile.classList.remove('mo-busy');
+        link1.classList.remove('on');
+        showSql(q, true);
+        result.classList.add('mo-busy');
+        resultStatus.textContent = 'running…';
+        link2.classList.add('on');
+      }, 260));
+      timers.push(setTimeout(() => {
+        result.classList.remove('mo-busy');
+        link2.classList.remove('on');
+        showResult(q, true);
+      }, 520));
+    }
+
+    modeButtons.forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.mode === mode) return;
+      mode = b.dataset.mode;
+      modeButtons.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      questions.forEach((p) => { p.hidden = p.dataset.mode !== mode; });
+      update(true);
+    }));
+    [doesSel, getSel].forEach((s) => s.addEventListener('change', () => update(true)));
+
+    update(false);
+  })();
+</script>

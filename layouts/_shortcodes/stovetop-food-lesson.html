@@ -1,0 +1,252 @@
+{{- /*
+  Static lesson figure for the pan + food section: "Food does not have one temperature."
+  One graph (pan, food surface, food center, with food added at 5 min) and a cross-section of the
+  food in the pan at an illustrative moment. Curves and numbers come from the shared model in
+  assets/js/stovetop-model.js (Medium burner), so they match the interactive simulator.
+  Usage in a post: {{< stovetop-food-lesson >}}
+*/ -}}
+<style>
+  .sfl-root {
+    --sfl-pan: #eb6834;        /* same series colors as stovetop-food.html */
+    --sfl-surface: #4a3aa7;
+    --sfl-center: #1baf7a;
+    --sfl-steel-hi: #f3f4f6;
+    --sfl-steel-lo: #a4a9b1;
+    --sfl-warm: #d9822b;
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+    font-size: 14px; line-height: 1.4; color: var(--primary);
+  }
+  :root[data-theme="dark"] .sfl-root {
+    --sfl-pan: #d95926;
+    --sfl-surface: #9085e9;
+    --sfl-center: #199e70;
+    --sfl-steel-hi: #c9ccd2;
+    --sfl-steel-lo: #6b717b;
+  }
+  .sfl-root * { box-sizing: border-box; }
+  .sfl-root svg { display: block; overflow: visible; }
+  .sfl-root text { font-family: inherit; font-variant-numeric: tabular-nums; }
+
+  .sfl-panels { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 4fr); gap: 14px; align-items: start; }
+  @media (max-width: 760px) { .sfl-panels { grid-template-columns: minmax(0, 1fr); } }
+  .sfl-panel { min-width: 0; padding: 14px; background: var(--entry); border: 1px solid var(--border); border-radius: 12px; }
+  .sfl-panel-title { margin: 0 0 6px; font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .sfl-tag { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--secondary); border: 1px solid var(--tertiary); border-radius: 999px; padding: 1px 7px; }
+
+  /* Graph */
+  .sfl-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 6px; padding: 0; list-style: none; font-size: 13px; color: var(--secondary); }
+  .sfl-legend li { margin: 0; display: inline-flex; align-items: center; gap: 6px; }
+  .sfl-legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
+  .sfl-graph svg { width: 100%; }
+  .sfl-grid line { stroke: var(--border); }
+  .sfl-axis text { fill: var(--secondary); font-size: 12px; }
+  .sfl-axis .sfl-baseline { stroke: var(--tertiary); }
+  .sfl-curve { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .sfl-added { stroke: var(--primary); stroke-width: 1.2; stroke-dasharray: 3 3; }
+  .sfl-snap { stroke: var(--tertiary); stroke-width: 1; stroke-dasharray: 2 3; }
+  .sfl-snap-dot { fill: var(--entry); stroke-width: 2; }
+  .sfl-label { font-size: 12px; paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sfl-label.sfl-strong { font-weight: 600; fill: var(--primary); }
+  .sfl-label.sfl-muted { fill: var(--secondary); }
+  .sfl-callout text { font-size: 12.5px; fill: var(--primary); paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sfl-callout line { stroke: var(--secondary); }
+  .sfl-callout circle { fill: var(--primary); }
+  .sfl-badge circle { fill: var(--primary); }
+  .sfl-badge text { fill: var(--entry); font-size: 11px; font-weight: 700; }
+  .sfl-notes { margin: 8px 0 0; padding-left: 1.4em; font-size: 13px; color: var(--primary); }
+  .sfl-notes li { margin: 2px 0; }
+
+  /* Cross-section */
+  .sfl-xsec svg { width: 100%; max-width: 380px; height: auto; margin: 0 auto; }
+  .sfl-xsec .sfl-xlabel { font-size: 13px; fill: var(--primary); }
+  .sfl-xsec .sfl-xlabel tspan.sfl-num { font-weight: 700; }
+  .sfl-arrow { stroke: var(--primary); stroke-width: 2.5; fill: none; stroke-linecap: round; }
+  .sfl-arrow-halo { stroke: var(--entry); stroke-width: 6; fill: none; stroke-linecap: round; opacity: .85; }
+  .sfl-order { margin: 6px 0 0; text-align: center; font-size: 14px; font-weight: 600; }
+  .sfl-order span { color: var(--secondary); font-weight: 400; }
+  .sfl-xnote { margin: 4px 0 0; text-align: center; font-size: 12.5px; color: var(--secondary); }
+</style>
+
+{{- $modelJS := resources.Get "js/stovetop-model.js" | minify | fingerprint }}
+<script src="{{ $modelJS.RelPermalink }}" integrity="{{ $modelJS.Data.Integrity }}"></script>
+{{- $id := printf "sfl%d" .Ordinal }}
+
+<div class="sfl-root">
+  <div class="sfl-panels">
+    <div class="sfl-panel sfl-graph">
+      <ul class="sfl-legend">
+        <li><i style="background: var(--sfl-pan)"></i>Pan</li>
+        <li><i style="background: var(--sfl-surface)"></i>Food surface</li>
+        <li><i style="background: var(--sfl-center)"></i>Food center</li>
+      </ul>
+      <svg role="img" aria-label="Temperature over 15 minutes. The pan heats to about 405°F. When cold food is added at 5 minutes, the pan dips to about 353°F and then slowly recovers. The food surface jumps from 40°F to over 300°F within a minute or two; the food center rises slowly, reaching only about 250°F by 15 minutes."></svg>
+      <ol class="sfl-notes" hidden></ol>
+    </div>
+
+    <div class="sfl-panel sfl-xsec">
+      <p class="sfl-panel-title">Inside the pan, 3 minutes after adding food <span class="sfl-tag">Illustrative</span></p>
+      <svg viewBox="0 52 320 194" role="img" aria-label="Cross-section of a steak in a hot pan. Arrows show heat moving from the pan into the food surface, then into the food center.">
+        <defs>
+          <linearGradient id="{{ $id }}-steel" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="var(--sfl-steel-lo)" />
+            <stop offset=".35" stop-color="var(--sfl-steel-hi)" />
+            <stop offset="1" stop-color="var(--sfl-steel-lo)" />
+          </linearGradient>
+        </defs>
+        <!-- pan, as a cutaway -->
+        <path d="M6 118 L22 214 L298 214 L314 118 L307 118 L292 200 L28 200 L13 118 Z" fill="url(#{{ $id }}-steel)" stroke="var(--sfl-steel-lo)" />
+        <path d="M6 118 L22 214 L298 214 L314 118 L307 118 L292 200 L28 200 L13 118 Z" fill="var(--sfl-warm)" opacity=".2" />
+        <!-- the food: surface layer around the center; marbling drawn over it -->
+        <g class="sfl-food"></g>
+        <!-- heat flow: pan → surface → center -->
+        <g class="sfl-arrows"></g>
+        <!-- labels -->
+        <g class="sfl-xlabels"></g>
+      </svg>
+      <p class="sfl-order">Pan <span>&gt;</span> Food surface <span>&gt;</span> Food center</p>
+      <p class="sfl-xnote">Heat always flows from hotter to colder.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const $ = (sel) => root.querySelector(sel);
+    const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+    const { DT, FOOD, stepWithFood } = window.StovetopModel;
+
+    // ---- Data: Medium burner, food added at 5 min, 15 min total; sampled every 5 simulated seconds
+    const BURNER = 70, ADD = 300, SPAN = 900, SNAP = ADD + 180, EVERY = 5;
+    const s = { panTemp: 70, surfaceTemp: FOOD.startTemp, centerTemp: FOOD.startTemp, burner: BURNER, foodInPan: false };
+    const run = [{ t: 0, pan: s.panTemp, surface: s.surfaceTemp, center: s.centerTemp }];
+    let dip = { t: ADD, pan: Infinity };
+    for (let i = 1; i <= SPAN / DT; i++) {
+      if (i === ADD / DT + 1) s.foodInPan = true; // in the pan from t = 5:00 on
+      stepWithFood(s, DT);
+      const t = i * DT;
+      if (s.foodInPan && s.panTemp < dip.pan) dip = { t, pan: s.panTemp };
+      if (i % (EVERY / DT) === 0) run.push({ t, pan: s.panTemp, surface: s.surfaceTemp, center: s.centerTemp });
+    }
+    const at = (t) => run[Math.round(t / EVERY)];
+    const snap = at(SNAP);
+
+    // ==== Cross-section ==========================================================
+    // Food fill by temperature, same mapping as the simulator: cool blue-gray → warm orange
+    const dark = () => document.documentElement.dataset.theme === 'dark';
+    function foodColor(temp) {
+      const u = clamp((temp - FOOD.startTemp) / 460, 0, 1);
+      const [a, b] = dark() ? [[84, 110, 140], [214, 110, 50]] : [[184, 203, 224], [240, 146, 82]];
+      return `rgb(${a.map((c, i) => Math.round(c + (b[i] - c) * u)).join(',')})`;
+    }
+    // The simulator's steak (same paths as stovetop-food.html) (150 × 42 units, flat bottom at y = 42), scaled up into the pan
+    const OUTER = 'M7.5 42 L142.5 42 Q148.8 42 148.8 34 C150 25.9 146.2 17.9 137.5 14.4 C126.2 9.8 115 12.1 105 8.7 C90 4.1 75 7.5 60 6.4 C42.5 5.2 25 7.5 13.8 13.3 C5 17.9 1.2 29.4 2.5 35.1 Q3.8 42 7.5 42 Z';
+    const INNER = 'M17.5 34 L132.5 34 Q138.8 34 138.8 29.4 C138.8 24.8 135 22.5 128.8 21.3 C120 19 111.2 20.2 102.5 16.7 C88.8 13.3 75 15.6 60 14.4 C45 13.3 30 15.6 21.2 20.2 C15 23.6 12.5 28.2 13.8 30.5 Q15 34 17.5 34 Z';
+    const MARBLING = ['M20 27.1 q5 -3.4 10 -1.1 t10 -2.3', 'M25 31.6 q3.8 1.1 7.5 0', 'M110 24.8 q5 2.3 10 0 t7.5 2.3', 'M116.2 30.5 q3.8 -1.7 7.5 0', 'M55 19 q3.8 -1.7 7.5 0'];
+    const FX = 1.8, FY = 1.75, FOX = 25, FOY = 200 - 42 * FY; // food transform: x 25…295, bottom on the pan at y = 200
+    function drawCrossSection() {
+      $('.sfl-food').innerHTML =
+        `<g transform="translate(${FOX} ${FOY}) scale(${FX} ${FY})">` +
+        `<path d="${OUTER}" fill="${foodColor(snap.surface)}" stroke="var(--sfl-surface)" stroke-width="1.4" vector-effect="non-scaling-stroke" />` +
+        `<path d="${INNER}" fill="${foodColor(snap.center)}" stroke="var(--sfl-center)" stroke-width="1.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" />` +
+        `<g fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="2" stroke-linecap="round">${MARBLING.map((d) => `<path d="${d}" vector-effect="non-scaling-stroke" />`).join('')}</g>` +
+        '</g>';
+    }
+    // Arrows up from the pan base into the bottom surface layer, then from the surface into the center
+    const arrow = (x, y0, y1) => `<path class="sfl-arrow-halo" d="M${x} ${y0} L${x} ${y1}" /><path class="sfl-arrow" d="M${x} ${y0} L${x} ${y1} M${x - 5} ${y1 + 6} L${x} ${y1} L${x + 5} ${y1 + 6}" />`;
+    $('.sfl-arrows').innerHTML = [125, 160, 195].map((x) => arrow(x, 210, 191) + arrow(x, 186, 166)).join('');
+    const tspan = (name, temp) => `${name} <tspan class="sfl-num">${Math.round(temp)}°F</tspan>`;
+    $('.sfl-xlabels').innerHTML =
+      // food surface: leader to the top band on the left
+      '<line x1="66" y1="102" x2="66" y2="152" stroke="var(--secondary)" />' +
+      `<text class="sfl-xlabel" x="14" y="96">${tspan('Food surface', snap.surface)}</text>` +
+      // food center: leader into the inner region on the right
+      '<line x1="236" y1="76" x2="236" y2="176" stroke="var(--secondary)" />' +
+      `<text class="sfl-xlabel" x="306" y="70" text-anchor="end">${tspan('Food center', snap.center)}</text>` +
+      // pan: under the base
+      `<text class="sfl-xlabel" x="160" y="236" text-anchor="middle">${tspan('Pan', snap.pan)}</text>`;
+
+    // ==== Graph ==================================================================
+    const svg = $('.sfl-graph svg'), notes = $('.sfl-notes');
+    const SERIES = [['center', 'Food center'], ['surface', 'Food surface'], ['pan', 'Pan']]; // drawn bottom-up
+    const Y_MAX = 500;
+    const CALLOUTS = [
+      { key: 'pan', text: ['Cold food absorbs heat from the pan.'], target: { t: dip.t, temp: dip.pan } },
+      { key: 'surface', text: ['The surface heats first.'], target: { t: ADD + 20, temp: at(ADD + 20).surface } },
+      { key: 'center', text: ['The center lags because', 'heat must conduct inward.'], target: { t: 630, temp: at(630).center } },
+    ];
+
+    function draw() {
+      const W = svg.clientWidth, narrow = W < 520;
+      const H = Math.round(clamp(W * 0.62, 280, 420));
+      const M = { top: 14, right: narrow ? 14 : 100, bottom: 40, left: 50 };
+      const pw = W - M.left - M.right, ph = H - M.top - M.bottom;
+      const sx = (t) => M.left + (t / SPAN) * pw, sy = (temp) => M.top + (1 - temp / Y_MAX) * ph;
+      const x0 = M.left, x1 = W - M.right, yBase = sy(0), xa = sx(ADD), xs = sx(SNAP);
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.style.height = `${H}px`;
+
+      let out = '<g class="sfl-grid">';
+      for (let temp = 100; temp <= Y_MAX; temp += 100) out += `<line x1="${x0}" x2="${x1}" y1="${sy(temp).toFixed(1)}" y2="${sy(temp).toFixed(1)}" />`;
+      out += '</g><g class="sfl-axis">';
+      for (let temp = 0; temp <= Y_MAX; temp += 100) out += `<text x="${x0 - 8}" y="${sy(temp).toFixed(1)}" dy="0.32em" text-anchor="end">${temp}°F</text>`;
+      for (let m = 0; m <= SPAN / 60; m += pw / 15 >= 30 ? 1 : 5) out += `<text x="${sx(m * 60).toFixed(1)}" y="${yBase + 18}" text-anchor="middle">${m}</text>`;
+      out += `<line class="sfl-baseline" x1="${x0}" x2="${x1}" y1="${yBase}" y2="${yBase}" />`;
+      out += `<text x="${(x0 + x1) / 2}" y="${H - 4}" text-anchor="middle">Time (minutes)</text></g>`;
+
+      // Food added + snapshot markers
+      out += `<line class="sfl-added" x1="${xa}" x2="${xa}" y1="${M.top}" y2="${yBase}" />`;
+      out += `<text class="sfl-label sfl-strong" x="${xa - 6}" y="${M.top + 10}" text-anchor="end">Food added</text>`;
+      out += `<line class="sfl-snap" x1="${xs}" x2="${xs}" y1="${M.top + 16}" y2="${yBase}" />`;
+      out += `<text class="sfl-label sfl-muted" x="${xs}" y="${yBase - 6}" text-anchor="middle">snapshot</text>`;
+
+      // Curves (food curves sit flat at 40°F, together, until the food goes in)
+      for (const [k] of SERIES) {
+        const d = run.map((p, i) => `${i ? 'L' : 'M'}${sx(p.t).toFixed(1)} ${sy(p[k]).toFixed(1)}`).join('');
+        out += `<path class="sfl-curve" d="${d}" stroke="var(--sfl-${k})" />`;
+      }
+      if (!narrow) out += `<text class="sfl-label sfl-muted" x="${sx(20)}" y="${sy(FOOD.startTemp) - 7}">Food in the fridge: ${FOOD.startTemp}°F</text>`;
+      for (const [k] of SERIES) out += `<circle class="sfl-snap-dot" r="4" cx="${xs}" cy="${sy(snap[k])}" stroke="var(--sfl-${k})" />`;
+
+      // End labels, nudged apart
+      if (!narrow) {
+        const end = run[run.length - 1];
+        const ends = SERIES.map(([k, name]) => ({ name, y: sy(end[k]) })).sort((a, b) => a.y - b.y);
+        for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 15);
+        out += ends.map((e) => `<text class="sfl-label sfl-strong" x="${x1 + 8}" y="${e.y.toFixed(1)}" dy="0.32em">${e.name}</text>`).join('');
+      }
+
+      // Callouts: text beside the curves on wide screens; numbered badges + a list below on phones
+      const tx = (c) => sx(c.target.t), ty = (c) => sy(c.target.temp);
+      if (!narrow) {
+        const place = {
+          pan: { x: xa + 12, y: sy(470), anchor: 'start', leader: [sx(dip.t), sy(470) + 5, sx(dip.t), ty(CALLOUTS[0]) - 5] },
+          surface: { x: sx(ADD + 75), y: sy(262), anchor: 'start', leader: [sx(ADD + 72), sy(262) - 4, tx(CALLOUTS[1]) + 3, ty(CALLOUTS[1])] },
+          center: { x: sx(560), y: sy(92), anchor: 'start', leader: [tx(CALLOUTS[2]), sy(92) - 14, tx(CALLOUTS[2]), ty(CALLOUTS[2]) + 5] },
+        };
+        out += CALLOUTS.map((c) => {
+          const p = place[c.key], [lx0, ly0, lx1, ly1] = p.leader;
+          return `<g class="sfl-callout"><line x1="${lx0}" y1="${ly0}" x2="${lx1}" y2="${ly1}" /><circle r="2.5" cx="${lx1}" cy="${ly1}" />` +
+            `<text x="${p.x}" y="${p.y}" text-anchor="${p.anchor}">${c.text.map((line, i) => `<tspan x="${p.x}" dy="${i ? '1.25em' : 0}">${line}</tspan>`).join('')}</text></g>`;
+        }).join('');
+      } else {
+        const offset = { pan: [10, -14], surface: [14, 6], center: [10, -14] };
+        out += CALLOUTS.map((c, i) => {
+          const [dx, dy] = offset[c.key];
+          return `<g class="sfl-badge"><circle r="9" cx="${tx(c) + dx}" cy="${ty(c) + dy}" /><text x="${tx(c) + dx}" y="${ty(c) + dy}" dy="0.35em" text-anchor="middle">${i + 1}</text></g>`;
+        }).join('');
+      }
+      svg.innerHTML = out;
+      notes.hidden = !narrow;
+      notes.innerHTML = CALLOUTS.map((c) => `<li>${c.text.join(' ')}</li>`).join('');
+    }
+
+    let lastW = 0;
+    new ResizeObserver(() => { if (svg.clientWidth !== lastW) { lastW = svg.clientWidth; draw(); } }).observe(svg.parentElement);
+    new MutationObserver(drawCrossSection).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    drawCrossSection();
+    draw();
+  })();
+</script>

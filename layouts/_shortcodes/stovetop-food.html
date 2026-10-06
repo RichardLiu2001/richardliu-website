@@ -1,0 +1,556 @@
+{{- /*
+  Cold food added to a hot pan: burner → pan → food surface → food center.
+  Pan, surface and center temperatures are integrated step by step with the shared model in
+  assets/js/stovetop-model.js (stepWithFood); nothing here is a pre-drawn curve.
+  The script has three separate parts: model (state + physics, no DOM), rendering, and controls.
+  Usage in a post: {{< stovetop-food >}}
+*/ -}}
+<style>
+  .sf-root {
+    --sf-pan: #eb6834;         /* series: pan (same as the empty-pan graph) */
+    --sf-surface: #4a3aa7;     /* series: food surface */
+    --sf-center: #1baf7a;      /* series: food center */
+    --sf-flame: #2a78d6;
+    --stk-accent: var(--sf-flame); /* burner knob (assets/js/stovetop-knob.js) */
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+    font-size: 14px; line-height: 1.4; color: var(--primary);
+  }
+  :root[data-theme="dark"] .sf-root {
+    --sf-pan: #d95926;
+    --sf-surface: #9085e9;
+    --sf-center: #199e70;
+    --sf-flame: #3987e5;
+  }
+  .sf-root * { box-sizing: border-box; }
+  .sf-root svg { display: block; overflow: visible; }
+  .sf-root text { font-family: inherit; font-variant-numeric: tabular-nums; }
+
+  /* ---- Controls ---- */
+  .sf-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 28px; margin-bottom: 14px; }
+  .sf-burner { display: flex; align-items: center; gap: 6px 14px; }
+  .sf-burner-info { display: flex; flex-direction: column; gap: 1px; min-width: 9.5em; }
+  .sf-burner-title { color: var(--secondary); font-size: 13px; }
+  .sf-burner-name { font-size: 20px; font-weight: 700; line-height: 1.2; }
+  .sf-burner-detail { color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .sf-transport { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .sf-root button {
+    font: inherit; font-size: 13px; line-height: 1.2; padding: 5px 12px; cursor: pointer; white-space: nowrap;
+    color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary); border-radius: 999px;
+  }
+  .sf-root button:focus-visible { outline: 2px solid var(--sf-flame); outline-offset: 2px; }
+  .sf-root button[aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); font-weight: 600; }
+  .sf-root .sf-play { width: 6.6em; font-weight: 600; color: var(--theme); background: var(--primary); border-color: var(--primary); }
+  .sf-root .sf-add { font-weight: 600; border-color: var(--sf-surface); box-shadow: inset 0 0 0 1px var(--sf-surface); }
+  .sf-root .sf-add:disabled { cursor: default; font-weight: 400; color: var(--secondary); border-color: var(--border); box-shadow: none; }
+  .sf-speed { display: inline-flex; align-items: center; gap: 4px; }
+  .sf-speed-label { color: var(--secondary); font-size: 13px; margin-right: 2px; }
+  .sf-clock { min-width: 8.5em; color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  /* ---- Panels ---- */
+  .sf-panels { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 14px; }
+  @media (max-width: 760px) { .sf-panels { grid-template-columns: minmax(0, 1fr); } }
+  .sf-panel { min-width: 0; padding: 14px; background: var(--entry); border: 1px solid var(--border); border-radius: 12px; }
+  .sf-scene svg { width: 100%; max-width: 520px; height: auto; margin: 0 auto; }
+
+
+  /* Heat-flow chain: burner → pan → surface → center */
+  .sf-chain { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; align-items: start; gap: 0 2px; margin-top: 12px; }
+  .sf-node { text-align: center; min-width: 0; }
+  .sf-node-name { display: block; font-size: 12px; color: var(--secondary); padding-bottom: 2px; border-bottom: 3px solid var(--sf-key, transparent); }
+  .sf-node-temp { display: block; font-size: 19px; font-weight: 700; line-height: 1.3; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .sf-node-note { display: block; font-size: 11.5px; color: var(--secondary); font-variant-numeric: tabular-nums; }
+  .sf-node.sf-out .sf-node-temp { color: var(--secondary); font-weight: 600; }
+  .sf-link { display: flex; flex-direction: column; align-items: center; padding-top: 14px; min-width: 40px; }
+  .sf-link svg { width: 40px; height: 14px; }
+  .sf-link path { fill: var(--secondary); }
+  .sf-link-w { font-size: 11.5px; color: var(--secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .sf-link.sf-idle path { fill: var(--border); }
+  .sf-scene-note { margin: 10px 0 0; font-size: 13px; color: var(--secondary); }
+  @media (max-width: 480px) {
+    .sf-node-temp { font-size: 16px; }
+    /* "Food surface" wraps here: give every name two lines so the temperatures stay level */
+    .sf-node-name { min-height: calc(2.8em + 5px); display: flex; align-items: flex-end; justify-content: center; line-height: 1.4; }
+    .sf-link { min-width: 30px; }
+    .sf-link svg { width: 30px; }
+  }
+
+  /* Graph */
+  .sf-graph { position: relative; }
+  .sf-graph svg { width: 100%; touch-action: pan-y; }
+  .sf-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 6px; padding: 0; list-style: none; font-size: 13px; color: var(--secondary); }
+  .sf-legend li { margin: 0; display: inline-flex; align-items: center; gap: 6px; }
+  .sf-legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
+  .sf-grid line { stroke: var(--border); }
+  .sf-axis text { fill: var(--secondary); font-size: 12px; }
+  .sf-axis .sf-baseline { stroke: var(--tertiary); }
+  .sf-room line { stroke: var(--secondary); stroke-dasharray: 1 4; stroke-linecap: round; }
+  .sf-eq line { stroke: var(--secondary); stroke-width: 1.2; stroke-dasharray: 6 5; }
+  .sf-added line { stroke: var(--primary); stroke-width: 1.2; stroke-dasharray: 3 3; }
+  .sf-graph text.sf-label { font-size: 12px; paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sf-eq text, .sf-room text { fill: var(--secondary); }
+  .sf-added text { fill: var(--primary); font-weight: 600; }
+  .sf-ends text { fill: var(--primary); font-weight: 600; }
+  .sf-curve { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .sf-dot { stroke: var(--entry); stroke-width: 2; }
+  .sf-hover line { stroke: var(--tertiary); }
+  .sf-hover circle { fill: var(--entry); stroke-width: 2; }
+  .sf-tip {
+    position: absolute; pointer-events: none; transform: translate(-50%, calc(-100% - 12px));
+    padding: 5px 9px; border-radius: 6px; font-size: 12px; line-height: 1.45; white-space: nowrap;
+    font-variant-numeric: tabular-nums; color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary);
+  }
+  .sf-tip b { font-weight: 600; }
+  .sf-tip i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .sf-caption { margin: 8px 0 0; color: var(--secondary); font-size: 13px; }
+  .sf-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+
+{{- $modelJS := resources.Get "js/stovetop-model.js" | minify | fingerprint }}
+<script src="{{ $modelJS.RelPermalink }}" integrity="{{ $modelJS.Data.Integrity }}"></script>
+{{- $knobJS := resources.Get "js/stovetop-knob.js" | minify | fingerprint }}
+<script src="{{ $knobJS.RelPermalink }}" integrity="{{ $knobJS.Data.Integrity }}"></script>
+{{- $sceneJS := resources.Get "js/stovetop-scene.js" | minify | fingerprint }}
+<script src="{{ $sceneJS.RelPermalink }}" integrity="{{ $sceneJS.Data.Integrity }}"></script>
+
+<div class="sf-root">
+  <div class="sf-controls">
+    <div class="sf-burner">
+      <svg class="sf-knob" aria-label="Burner power"></svg>
+      <div class="sf-burner-info">
+        <span class="sf-burner-title">Burner</span>
+        <span class="sf-burner-name"></span>
+        <span class="sf-burner-detail"></span>
+      </div>
+    </div>
+    <div class="sf-transport">
+      <button type="button" class="sf-play">▶ Play</button>
+      <button type="button" class="sf-add">+ Add food</button>
+      <button type="button" class="sf-reset">↺ Reset</button>
+      <span class="sf-speed" role="group" aria-label="Simulation speed">
+        <span class="sf-speed-label">Speed</span>
+      </span>
+      <span class="sf-clock"></span>
+    </div>
+  </div>
+
+  <div class="sf-panels">
+    <div class="sf-panel sf-scene">
+      <svg role="img" aria-label="Cutaway of a pan on a gas burner, with a steak beside it or in it"></svg>
+
+      <div class="sf-chain">
+        <div class="sf-node">
+          <span class="sf-node-name">Burner</span>
+          <span class="sf-node-temp sf-v-burner"></span>
+        </div>
+        <div class="sf-link sf-l-burner"><svg viewBox="0 0 40 14"><path /></svg><span class="sf-link-w"></span></div>
+        <div class="sf-node" style="--sf-key: var(--sf-pan)">
+          <span class="sf-node-name">Pan</span>
+          <span class="sf-node-temp sf-v-pan"></span>
+          <span class="sf-node-note sf-v-room"></span>
+        </div>
+        <div class="sf-link sf-l-food"><svg viewBox="0 0 40 14"><path /></svg><span class="sf-link-w"></span></div>
+        <div class="sf-node sf-n-food" style="--sf-key: var(--sf-surface)">
+          <span class="sf-node-name">Food surface</span>
+          <span class="sf-node-temp sf-v-surface"></span>
+        </div>
+        <div class="sf-link sf-l-center"><svg viewBox="0 0 40 14"><path /></svg><span class="sf-link-w"></span></div>
+        <div class="sf-node sf-n-food" style="--sf-key: var(--sf-center)">
+          <span class="sf-node-name">Food center</span>
+          <span class="sf-node-temp sf-v-center"></span>
+        </div>
+      </div>
+      <p class="sf-scene-note"></p>
+    </div>
+
+    <div class="sf-panel sf-graph">
+      <ul class="sf-legend">
+        <li><i style="background: var(--sf-pan)"></i>Pan</li>
+        <li><i style="background: var(--sf-surface)"></i>Food surface</li>
+        <li><i style="background: var(--sf-center)"></i>Food center</li>
+      </ul>
+      <svg role="img" aria-label="Pan, food surface and food center temperatures over time">
+        <g class="sf-grid"></g>
+        <g class="sf-axis"></g>
+        <g class="sf-room"><line /></g>
+        <g class="sf-eq"><line /></g>
+        <g class="sf-added" visibility="hidden"><line /></g>
+        <path class="sf-curve sf-c-center" style="stroke: var(--sf-center)" />
+        <path class="sf-curve sf-c-surface" style="stroke: var(--sf-surface)" />
+        <path class="sf-curve sf-c-pan" style="stroke: var(--sf-pan)" />
+        <g class="sf-room"><text class="sf-label"></text></g>
+        <g class="sf-eq"><text class="sf-label" text-anchor="end"></text></g>
+        <g class="sf-added"><text class="sf-label"></text></g>
+        <g class="sf-dots">
+          <circle class="sf-dot sf-d-center" r="5" style="fill: var(--sf-center)" />
+          <circle class="sf-dot sf-d-surface" r="5" style="fill: var(--sf-surface)" />
+          <circle class="sf-dot sf-d-pan" r="5" style="fill: var(--sf-pan)" />
+        </g>
+        <g class="sf-ends"></g>
+        <g class="sf-hover" visibility="hidden">
+          <line />
+          <circle class="sf-h-pan" r="4" style="stroke: var(--sf-pan)" />
+          <circle class="sf-h-surface" r="4" style="stroke: var(--sf-surface)" />
+          <circle class="sf-h-center" r="4" style="stroke: var(--sf-center)" />
+        </g>
+      </svg>
+      <div class="sf-tip" hidden></div>
+      <p class="sf-caption">The food does not have one temperature: its surface heats first, then heat conducts inward, so the center lags behind.</p>
+    </div>
+  </div>
+  <p class="sf-sr" aria-live="polite"></p>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const $ = (sel) => root.querySelector(sel);
+    const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+
+    // ==== Model: state and physics (no DOM in this section) =========================
+    // The equations and constants live in assets/js/stovetop-model.js
+    const { MODEL, DT, PRESETS, FOOD, burnerWatts, equilibriumTemp, foodHeatFlows, stepWithFood } = window.StovetopModel;
+    const SAMPLE_STEPS = 20;  // record a history sample every 20 steps (1 simulated second)
+    const MAX_SAMPLES = 2400; // past this, history is thinned to every other sample
+    const INITIAL_BURNER = 70;
+    const SPEEDS = [3, 15, 60];
+    const SERIES = ['pan', 'surface', 'center'];
+
+    // Surface and center history are null until the food is in the pan, so those curves aren't drawn yet
+    const freshState = (burner, speed) => ({
+      time: 0, steps: 0, running: false, burner, speed,
+      panTemp: MODEL.roomTemp, surfaceTemp: FOOD.startTemp, centerTemp: FOOD.startTemp,
+      foodInPan: false, foodAddedAt: null, foodStart: null,
+      sampleEvery: SAMPLE_STEPS,
+      history: { time: [0], pan: [MODEL.roomTemp], surface: [null], center: [null] },
+    });
+
+    function recordHistory(s) {
+      const h = s.history;
+      h.time.push(s.time);
+      h.pan.push(s.panTemp);
+      h.surface.push(s.foodInPan ? s.surfaceTemp : null);
+      h.center.push(s.foodInPan ? s.centerTemp : null);
+      if (h.time.length > MAX_SAMPLES) {
+        for (const k of Object.keys(h)) h[k] = h[k].filter((_, i) => i % 2 === 0);
+        s.sampleEvery *= 2;
+      }
+    }
+
+    function updatePhysics(s, dt) {
+      stepWithFood(s, dt);
+      s.steps += 1;
+      s.time = s.steps * dt;
+      if (s.steps % s.sampleEvery === 0) recordHistory(s);
+    }
+
+    // Puts the food in the pan at the current simulated time. No temperature changes here:
+    // from the next step on, the pan → surface → center flows do that.
+    function addFood(s) {
+      if (s.foodInPan) return false;
+      s.foodInPan = true;
+      s.foodAddedAt = s.time;
+      s.foodStart = { surface: s.surfaceTemp, center: s.centerTemp };
+      return true;
+    }
+
+    let state = freshState(INITIAL_BURNER, 15);
+    let pending = 0; // simulated seconds owed to the physics, carried between frames
+
+    function advance(simSeconds) {
+      pending += simSeconds;
+      while (pending >= DT) { updatePhysics(state, DT); pending -= DT; }
+    }
+
+    function resetSimulation() {
+      state = freshState(INITIAL_BURNER, state.speed);
+      pending = 0;
+    }
+
+    // ==== Rendering: reads state, writes DOM ======================================
+    const fmtW = (w) => `${Math.round(w).toLocaleString('en-US')} W`;
+    const fmtT = (t) => `${Math.round(t)}°F`;
+    const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+    const presetName = (pct) => (PRESETS.find(([, v]) => v === pct) || [])[0];
+
+    // -- Schematic (assets/js/stovetop-scene.js)
+    const scene = window.StovetopScene($('.sf-scene svg'), { foodStartTemp: FOOD.startTemp });
+    const renderSchematic = (s) => scene.render(s);
+
+    // -- Heat-flow chain (live temperatures and the watts flowing between them)
+    const chain = {
+      burner: $('.sf-v-burner'), pan: $('.sf-v-pan'), room: $('.sf-v-room'),
+      surface: $('.sf-v-surface'), center: $('.sf-v-center'),
+      lBurner: $('.sf-l-burner'), lFood: $('.sf-l-food'), lCenter: $('.sf-l-center'),
+    };
+    const sceneNote = $('.sf-scene-note');
+    // Arrow whose shaft thickens with the heat flow it carries
+    function renderLink(el, watts, active) {
+      const t = active ? clamp(1.5 + (Math.abs(watts) / 1500) * 8, 1.5, 9.5) : 1.5;
+      const y0 = 7 - t / 2, y1 = 7 + t / 2;
+      el.querySelector('path').setAttribute('d', `M2 ${y0} L28 ${y0} L28 1 L39 7 L28 13 L28 ${y1} L2 ${y1} Z`);
+      el.classList.toggle('sf-idle', !active);
+      el.querySelector('.sf-link-w').textContent = active ? fmtW(watts) : '—';
+    }
+
+    function renderChain(s) {
+      const f = foodHeatFlows(s);
+      chain.burner.textContent = `${s.burner}%`;
+      chain.pan.textContent = fmtT(s.panTemp);
+      chain.room.textContent = `−${fmtW(f.panToRoom)} to room`;
+      chain.surface.textContent = fmtT(s.surfaceTemp);
+      chain.center.textContent = fmtT(s.centerTemp);
+      root.querySelectorAll('.sf-n-food').forEach((n) => n.classList.toggle('sf-out', !s.foodInPan));
+      renderLink(chain.lBurner, f.heatIn, f.heatIn > 0);
+      renderLink(chain.lFood, f.panToFood, s.foodInPan);
+      renderLink(chain.lCenter, f.surfaceToCenter, s.foodInPan);
+      if (!s.foodInPan) {
+        sceneNote.textContent = `The food is still out of the pan at ${fmtT(FOOD.startTemp)}. Press “Add food” when you're ready.`;
+      } else {
+        const gap = s.surfaceTemp - s.centerTemp;
+        sceneNote.textContent = `Food added at ${fmtClock(s.foodAddedAt)}. The food surface is ${Math.round(Math.abs(gap))}°F ${gap >= 0 ? 'hotter' : 'cooler'} than the food center.`;
+      }
+    }
+
+    // -- Graph
+    const graph = $('.sf-graph svg');
+    const gridG = $('.sf-grid'), axisG = $('.sf-axis');
+    const [roomLineG, roomTextG] = root.querySelectorAll('.sf-room');
+    const [eqLineG, eqTextG] = root.querySelectorAll('.sf-eq');
+    const addedGs = root.querySelectorAll('.sf-added');
+    const endsG = $('.sf-ends');
+    const curves = Object.fromEntries(SERIES.map((k) => [k, $(`.sf-c-${k}`)]));
+    const dots = Object.fromEntries(SERIES.map((k) => [k, $(`.sf-d-${k}`)]));
+    const hoverG = $('.sf-hover'), hoverLine = $('.sf-hover line');
+    const hoverDots = Object.fromEntries(SERIES.map((k) => [k, $(`.sf-h-${k}`)]));
+    const tip = $('.sf-tip');
+    const NAMES = { pan: 'Pan', surface: 'Food surface', center: 'Food center' };
+    const M = { top: 12, right: 124, bottom: 40, left: 50 }; // right margin holds the end labels (narrower on phones)
+    const Y_MAX = 650;
+    const X_SPANS = [10, 15, 20, 30, 45, 60, 90, 120]; // minutes; the axis widens through these
+    let W = 0, H = 0, xMax = 0, hoverPx = null;
+
+    const xSpanFor = (sec) => (X_SPANS.find((m) => m * 60 >= sec) || Math.ceil(sec / 3600) * 60) * 60;
+    const plotW = () => W - M.left - M.right;
+    const plotH = () => H - M.top - M.bottom;
+    const sx = (t) => M.left + (t / xMax) * plotW();
+    const sy = (temp) => M.top + (1 - temp / Y_MAX) * plotH();
+    const setLine = (el, x1, y1, x2, y2) => {
+      el.setAttribute('x1', x1); el.setAttribute('y1', y1); el.setAttribute('x2', x2); el.setAttribute('y2', y2);
+    };
+
+    function drawAxes() {
+      const x0 = M.left, x1 = W - M.right, yBase = sy(0);
+      let grid = '', axis = '';
+      for (let temp = 0; temp <= 600; temp += 100) {
+        const y = sy(temp).toFixed(1);
+        if (temp) grid += `<line x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" />`;
+        axis += `<text x="${x0 - 8}" y="${y}" dy="0.32em" text-anchor="end">${temp}°F</text>`;
+      }
+      const spanMin = xMax / 60, maxTicks = Math.max(2, Math.floor(plotW() / 48));
+      const step = [1, 2, 5, 10, 15, 30, 60, 120].find((s) => spanMin / s <= maxTicks) || 240;
+      for (let m = 0; m <= spanMin + 1e-9; m += step) {
+        axis += `<text x="${sx(m * 60).toFixed(1)}" y="${yBase + 18}" text-anchor="middle">${m}</text>`;
+      }
+      axis += `<line class="sf-baseline" x1="${x0}" x2="${x1}" y1="${yBase}" y2="${yBase}" />`;
+      axis += `<text x="${(x0 + x1) / 2}" y="${H - 4}" text-anchor="middle">Elapsed time (simulated minutes)</text>`;
+      gridG.innerHTML = grid;
+      axisG.innerHTML = axis;
+    }
+
+    function layoutGraph() {
+      const w = graph.clientWidth;
+      const span = xSpanFor(state.time);
+      if (w === W && span === xMax) return;
+      W = w; xMax = span;
+      M.right = W < 480 ? 50 : 124;
+      H = Math.round(clamp(W * 0.66, 260, 380));
+      graph.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      graph.style.height = `${H}px`;
+      drawAxes();
+    }
+
+    function renderGraph(s) {
+      layoutGraph();
+      const x0 = M.left, x1 = W - M.right, h = s.history;
+
+      const yRoom = sy(MODEL.roomTemp);
+      setLine(roomLineG.firstElementChild, x0, yRoom, x1, yRoom);
+      const roomText = roomTextG.firstElementChild;
+      roomText.setAttribute('x', x0 + 4); roomText.setAttribute('y', yRoom + 15);
+      roomText.textContent = `Room: ${MODEL.roomTemp}°F`;
+
+      const eq = equilibriumTemp(s.burner), yEq = sy(eq);
+      setLine(eqLineG.firstElementChild, x0, yEq, x1, yEq);
+      const eqText = eqTextG.firstElementChild;
+      eqText.setAttribute('x', x1 - 4); eqText.setAttribute('y', yEq - 7);
+      eqText.textContent = `${W < 480 ? 'Equilibrium' : 'Equilibrium for this burner setting'}: ${Math.round(eq)}°F`;
+      eqLineG.style.display = eqTextG.style.display = s.burner === 0 ? 'none' : '';
+
+      // "Food added" marker
+      addedGs.forEach((g) => g.setAttribute('visibility', s.foodInPan ? 'visible' : 'hidden'));
+      if (s.foodInPan) {
+        const xa = sx(s.foodAddedAt);
+        setLine(addedGs[0].firstElementChild, xa, M.top, xa, sy(0));
+        const t = addedGs[1].firstElementChild, flip = xa > x1 - 90;
+        t.setAttribute('x', flip ? xa - 5 : xa + 5); t.setAttribute('y', M.top + 10);
+        t.setAttribute('text-anchor', flip ? 'end' : 'start');
+        t.textContent = `Food added (${fmtClock(s.foodAddedAt)})`;
+      }
+
+      // Curves: pan from t = 0; surface and center start at the moment the food went in
+      const now = { pan: s.panTemp, surface: s.surfaceTemp, center: s.centerTemp };
+      const cx = sx(s.time);
+      const ends = [];
+      for (const k of SERIES) {
+        let d = '';
+        if (k !== 'pan' && s.foodInPan) d = `M${sx(s.foodAddedAt).toFixed(1)} ${sy(s.foodStart[k]).toFixed(1)}`;
+        for (let i = 0; i < h.time.length; i++) {
+          const v = h[k][i];
+          if (v === null || (k !== 'pan' && h.time[i] <= s.foodAddedAt)) continue;
+          d += `${d ? 'L' : 'M'}${sx(h.time[i]).toFixed(1)} ${sy(v).toFixed(1)}`;
+        }
+        const visible = k === 'pan' || s.foodInPan;
+        if (visible) d += `${d ? 'L' : 'M'}${cx.toFixed(1)} ${sy(now[k]).toFixed(1)}`;
+        curves[k].setAttribute('d', visible ? d : '');
+        dots[k].setAttribute('visibility', visible ? 'visible' : 'hidden');
+        dots[k].setAttribute('cx', cx); dots[k].setAttribute('cy', sy(now[k]));
+        if (visible) ends.push({ k, y: sy(now[k]) });
+      }
+
+      // End labels beside the live dots, nudged apart so they never overlap
+      ends.sort((a, b) => a.y - b.y);
+      for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 15);
+      const overflow = ends.length ? ends[ends.length - 1].y - (sy(0) - 4) : 0;
+      if (overflow > 0) ends.forEach((e) => (e.y -= overflow));
+      endsG.innerHTML = ends.map((e) =>
+        `<text class="sf-label" x="${(cx + 9).toFixed(1)}" y="${e.y.toFixed(1)}" dy="0.32em">${W < 480 ? '' : `${NAMES[e.k]} `}${fmtT(now[e.k])}</text>`).join('');
+
+      renderHover(s);
+    }
+
+    // Crosshair + tooltip with all three temperatures at the hovered moment
+    function renderHover(s) {
+      if (hoverPx === null || s.time === 0 || hoverPx < M.left || hoverPx > W - M.right) {
+        hoverG.setAttribute('visibility', 'hidden');
+        tip.hidden = true;
+        return;
+      }
+      const t = clamp(((hoverPx - M.left) / plotW()) * xMax, 0, s.time);
+      const i = Math.round(t / (s.sampleEvery * DT)), h = s.history;
+      const at = i < h.time.length
+        ? { time: h.time[i], pan: h.pan[i], surface: h.surface[i], center: h.center[i] }
+        : { time: s.time, pan: s.panTemp, surface: s.foodInPan ? s.surfaceTemp : null, center: s.foodInPan ? s.centerTemp : null };
+      const x = sx(at.time);
+      setLine(hoverLine, x, M.top, x, sy(0));
+      for (const k of SERIES) {
+        hoverDots[k].setAttribute('visibility', at[k] === null ? 'hidden' : 'inherit');
+        if (at[k] !== null) { hoverDots[k].setAttribute('cx', x); hoverDots[k].setAttribute('cy', sy(at[k])); }
+      }
+      hoverG.setAttribute('visibility', 'visible');
+      tip.innerHTML = `<b>${fmtClock(at.time)} elapsed</b><br>` + SERIES.map((k) =>
+        `<i style="background: var(--sf-${k})"></i>${NAMES[k]}: ${at[k] === null ? 'not in pan' : fmtT(at[k])}`).join('<br>');
+      tip.hidden = false;
+      const box = graph.getBoundingClientRect(), panel = graph.parentElement.getBoundingClientRect();
+      const half = tip.offsetWidth / 2 + 4;
+      tip.style.left = `${clamp(box.left - panel.left + x, half, panel.width - half)}px`;
+      tip.style.top = `${Math.max(box.top - panel.top + sy(at.pan), tip.offsetHeight + 16)}px`;
+    }
+
+    // -- Controls display
+    const burnerName = $('.sf-burner-name'), burnerDetail = $('.sf-burner-detail');
+    const playBtn = $('.sf-play'), addBtn = $('.sf-add'), clock = $('.sf-clock');
+
+    function renderControls(s) {
+      const name = presetName(s.burner);
+      knob.render(s.burner);
+      burnerName.textContent = name || `${s.burner}%`;
+      burnerDetail.textContent = `${s.burner}% · ${fmtW(burnerWatts(s.burner))} heat input`;
+      root.querySelectorAll('.sf-speed button').forEach((b) => b.setAttribute('aria-pressed', +b.dataset.v === s.speed));
+      playBtn.textContent = s.running ? '❚❚ Pause' : '▶ Play';
+      playBtn.setAttribute('aria-label', s.running ? 'Pause' : 'Play');
+      addBtn.disabled = s.foodInPan;
+      addBtn.textContent = s.foodInPan ? `Food added at ${fmtClock(s.foodAddedAt)}` : '+ Add food';
+      clock.textContent = `Elapsed: ${fmtClock(s.time)}`;
+    }
+
+    function render() {
+      renderSchematic(state);
+      renderChain(state);
+      renderGraph(state);
+      renderControls(state);
+    }
+
+    // ==== Controls: user input → state, plus the animation loop ===================
+    const live = $('.sf-sr');
+    let announceTimer;
+    const announce = (msg) => { clearTimeout(announceTimer); announceTimer = setTimeout(() => (live.textContent = msg), 400); };
+
+    const speedGroup = $('.sf-speed');
+    for (const v of SPEEDS) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = `${v}×`; b.dataset.v = v;
+      speedGroup.appendChild(b);
+    }
+
+    // Changing the burner changes heat input only; every temperature carries on from where it is
+    function setBurner(pct) {
+      state.burner = clamp(Math.round(pct), 0, 100);
+      render();
+      announce(`Burner ${state.burner}%.`);
+    }
+    const knob = window.StovetopKnob($('.sf-knob'), { presets: PRESETS, onChange: setBurner });
+
+    speedGroup.addEventListener('click', (e) => {
+      if (!e.target.dataset.v) return;
+      state.speed = +e.target.dataset.v;
+      render();
+    });
+
+    let lastFrame = null, visible = true;
+    function frame(now) {
+      lastFrame = null;
+      if (!state.running || !visible) return;
+      if (frame.prev !== undefined) advance(Math.min((now - frame.prev) / 1000, 0.1) * state.speed);
+      frame.prev = now;
+      render();
+      lastFrame = requestAnimationFrame(frame);
+    }
+    function startLoop() {
+      if (lastFrame !== null || !state.running || !visible) return;
+      frame.prev = undefined;
+      lastFrame = requestAnimationFrame(frame);
+    }
+
+    playBtn.addEventListener('click', () => {
+      state.running = !state.running;
+      render();
+      startLoop();
+      announce(state.running ? 'Playing' : 'Paused');
+    });
+    addBtn.addEventListener('click', () => {
+      if (!addFood(state)) return;
+      scene.carryIn();
+      render();
+      announce(`Food added at ${fmtClock(state.foodAddedAt)}.`);
+    });
+    $('.sf-reset').addEventListener('click', () => {
+      scene.cancel();
+      resetSimulation();
+      render();
+      announce('Reset: pan at room temperature, food back out of the pan');
+    });
+
+    const setHover = (e) => { hoverPx = e.clientX - graph.getBoundingClientRect().left; renderHover(state); };
+    graph.addEventListener('pointermove', setHover);
+    graph.addEventListener('pointerdown', setHover);
+    graph.addEventListener('pointerleave', () => { hoverPx = null; renderHover(state); });
+
+    // Pause the loop (not the simulation state) while the widget is scrolled out of view
+    new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; startLoop(); }).observe(root);
+    new ResizeObserver(() => { W = 0; renderGraph(state); }).observe(graph.parentElement);
+
+    render();
+  })();
+</script>

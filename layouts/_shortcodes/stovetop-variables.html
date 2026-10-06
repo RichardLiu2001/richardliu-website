@@ -1,0 +1,173 @@
+{{- /*
+  Static teaching figure: "What changes the center-temperature curve?". Two small panels for the two properties of
+  the cooking problem itself (not techniques), each changing one thing with everything else held constant:
+  thickness and initial temperature. Drawn schematically (no numeric axes).
+    - Thickness: the textbook center temperature of a slab whose two faces are held at one temperature (heat
+      diffusion). Time scales with thickness², the same scaling the simulator uses (k_side ∝ 1/thickness²), so the
+      thick curve is the thin curve stretched in time, heading to the same final temperature.
+    - Initial temperature: real runs of the simulator's model (assets/js/stovetop-presets.js simulate()).
+  Usage in a post: {{< stovetop-variables >}}
+*/ -}}
+<style>
+  .sv-root {
+    --sv-center: #1baf7a; --sv-center-2: #0e6b49; --sv-surface: #4a3aa7; --sv-good: #2f8f5b;
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+    font-size: 14px; color: var(--primary);
+  }
+  :root[data-theme="dark"] .sv-root { --sv-center: #199e70; --sv-center-2: #8fe0bf; --sv-surface: #9085e9; --sv-good: #4cc38a; }
+  .sv-root * { box-sizing: border-box; }
+  .sv-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 700px) { .sv-panels { grid-template-columns: minmax(0, 1fr); } }
+  .sv-panel { min-width: 0; display: flex; flex-direction: column; padding: 14px; background: var(--entry); border: 1px solid var(--border); border-radius: 12px; }
+  .sv-root .sv-concept { margin: 0; font-size: 15px; font-weight: 700; }
+  .sv-root .sv-held { margin: 2px 0 6px; font-size: 12px; color: var(--secondary); }
+  .sv-panel svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .sv-root text { font-family: inherit; }
+  .sv-axis { stroke: var(--tertiary); stroke-width: 1.2; fill: none; }
+  .sv-axis-label { font-size: 11.5px; fill: var(--secondary); }
+  .sv-target { stroke: var(--sv-good); stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .sv-target-label { font-size: 11px; font-weight: 700; fill: var(--sv-good); paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sv-final { stroke: var(--secondary); stroke-width: 1; stroke-dasharray: 1 3; }
+  .sv-curve { fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .sv-label { font-size: 12px; font-weight: 700; fill: var(--primary); paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sv-note { font-size: 11.5px; fill: var(--secondary); paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sv-dot { fill: var(--entry); stroke-width: 2; }
+  .sv-guide { stroke: var(--secondary); stroke-width: 1; stroke-dasharray: 2 3; }
+  .sv-arrow { stroke: var(--primary); stroke-width: 1.4; fill: none; }
+  .sv-root .sv-takeaway { margin: 8px 0 2px; font-size: 13.5px; font-weight: 700; }
+  .sv-root .sv-caption { margin: 0; font-size: 13px; color: var(--secondary); }
+</style>
+
+{{- range slice "stovetop-model" "stovetop-outcome" "stovetop-sim" "stovetop-presets" }}
+{{- $js := resources.Get (printf "js/%s.js" .) | minify | fingerprint }}
+<script src="{{ $js.RelPermalink }}" integrity="{{ $js.Data.Integrity }}"></script>
+{{- end }}
+
+<section class="sv-root">
+  <div class="sv-panels">
+    <figure class="sv-panel" data-panel="thickness">
+      <p class="sv-concept">Thickness → center lag</p>
+      <p class="sv-held">Center temperature. Same food, same starting temperature, heated the same way; one piece is twice as thick.</p>
+      <svg role="img" aria-label="Center temperature over time for a thin piece and one twice as thick. Both start at the same temperature, barely move at first, rise, then flatten toward the same final temperature. The thick curve is the thin one stretched out in time: it waits longer, rises more slowly, and reaches the center target about four times later."></svg>
+      <p class="sv-takeaway">Thickness increases center thermal lag.</p>
+      <p class="sv-caption">Heat has farther to travel in thicker food, so the center responds later and takes much longer to reach the same target temperature.</p>
+    </figure>
+    <figure class="sv-panel" data-panel="start">
+      <p class="sv-concept">Initial temperature → starting point</p>
+      <p class="sv-held">Center temperature, 40°F vs. 60°F start. Same thickness, burner and flip.</p>
+      <svg role="img" aria-label="Center temperature over time for food starting at 40°F and at 60°F. The curves have the same shape, but the warmer one starts higher and reaches the target sooner."></svg>
+      <p class="sv-takeaway">Initial temperature changes how far the center has to travel to reach its target.</p>
+      <p class="sv-caption">Colder food starts farther from the target, so it takes longer to get there.</p>
+    </figure>
+  </div>
+</section>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const P = window.StovetopPresets, { CENTER_TARGET } = window.StovetopOutcome;
+    const at = (min) => P.PREHEAT + min * 60;
+    // One model run per curve: Medium burner, food in after the usual preheat, one flip at 3 minutes
+    const run = (initial, minutes) => P.simulate({
+      initial: { burner: 70, ...initial },
+      actions: [{ t: P.PREHEAT, type: 'addFood' }, { t: at(3), type: 'flip' }, { t: at(minutes), type: 'pause' }],
+    });
+    // A series as [cooking minutes, value] pairs
+    const series = (s, key) => s.history.time.map((t, i) => [(t - s.foodAddedAt) / 60, s.history[key][i]]).filter(([m, v]) => v !== null && m >= 0);
+    const firstReach = (pts, temp) => (pts.find(([, v]) => v >= temp) || [null])[0];
+
+    // Center of a slab (half-thickness L) starting at T0 whose faces are held at TS, by the series solution of
+    // the heat equation: θ = Σ 4(−1)ⁿ / ((2n+1)π) · exp(−((2n+1)π/2)² · Fo),  Fo = αt / L²,  T = TS + (T0 − TS)·θ.
+    // Lag → rise → flatten; doubling the thickness multiplies every time by 4. Schematic units.
+    const T0 = 40, TS = 300, THIN_TIMESCALE = 7.5; // minutes for L²/α of the thin piece (axes are unlabeled)
+    function slabCenter(timescale, span) {
+      const pts = [];
+      for (let m = 0; m <= span + 1e-9; m += span / 240) {
+        const fo = m / timescale;
+        let theta = 0;
+        for (let n = 0; n < 60; n++) {
+          const k = (2 * n + 1) * Math.PI / 2;
+          theta += (4 * (n % 2 ? -1 : 1)) / ((2 * n + 1) * Math.PI) * Math.exp(-k * k * fo);
+        }
+        pts.push([m, TS + (T0 - TS) * Math.min(1, theta)]);
+      }
+      return pts;
+    }
+
+    const PANELS = {
+      thickness: { span: 14, y: [20, 320], target: true, final: TS, lines: [
+        { pts: slabCenter(THIN_TIMESCALE, 14), color: 'var(--sv-center)', label: 'thin' },
+        { pts: slabCenter(THIN_TIMESCALE * 4, 14), color: 'var(--sv-center-2)', label: 'thick (2×)' },
+      ] },
+      start: { span: 8, y: [20, 280], target: true, targetLabelLeft: true, lines: [
+        { pts: series(run({ initialFoodTemp: 60 }, 8), 'center'), color: 'var(--sv-center)', label: '60°F start' },
+        { pts: series(run({ initialFoodTemp: 40 }, 8), 'center'), color: 'var(--sv-center-2)', label: '40°F start' },
+      ] },
+    };
+
+    function draw(fig) {
+      const cfg = PANELS[fig.dataset.panel], svg = fig.querySelector('svg');
+      const W = 320, H = 200, M = { top: 10, right: 12, bottom: 22, left: 40 };
+      const pw = W - M.left - M.right, ph = H - M.top - M.bottom;
+      const sx = (m) => M.left + (m / cfg.span) * pw, sy = (v) => M.top + (1 - (v - cfg.y[0]) / (cfg.y[1] - cfg.y[0])) * ph;
+      const x0 = M.left, x1 = W - M.right, yBase = H - M.bottom;
+      let out = '';
+
+      // Center target
+      const TARGET = (CENTER_TARGET.min + CENTER_TARGET.max) / 2;
+      if (cfg.target) {
+        const y = sy(TARGET);
+        out += `<line class="sv-target" x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" />`;
+        out += cfg.targetLabelLeft
+          ? `<text class="sv-target-label" x="${x0 + 6}" y="${y - 6}">Center target</text>`
+          : `<text class="sv-target-label" x="${x1}" y="${y + 13}" text-anchor="end">Center target</text>`;
+      }
+      if (cfg.final) {
+        const y = sy(cfg.final);
+        out += `<line class="sv-final" x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" />`;
+        out += `<text class="sv-note" x="${x0 + 6}" y="${y - 5}">both head to the same final temperature</text>`;
+      }
+      // Axes, schematic: no numbers, just time → and temperature ↑
+      out += `<path class="sv-axis" d="M${x0} ${M.top} L${x0} ${yBase} L${x1} ${yBase}" />`;
+      out += `<path class="sv-axis" d="M${x0 - 3} ${M.top + 5} L${x0} ${M.top} L${x0 + 3} ${M.top + 5} M${x1 - 5} ${yBase - 3} L${x1} ${yBase} L${x1 - 5} ${yBase + 3}" />`;
+      out += `<text class="sv-axis-label" x="${x1}" y="${yBase + 15}" text-anchor="end">time</text>`;
+      out += `<text class="sv-axis-label" transform="translate(${x0 - 26} ${M.top + 2}) rotate(-90)" text-anchor="end">temperature</text>`;
+
+      // Curves
+      for (const l of cfg.lines) {
+        const d = l.pts.filter(([m]) => m <= cfg.span).map(([m, v], i) => `${i ? 'L' : 'M'}${sx(m).toFixed(1)} ${sy(v).toFixed(1)}`).join('');
+        out += `<path class="sv-curve" d="${d}" stroke="${l.color}"${l.dash ? ` stroke-dasharray="${l.dash}"` : ''} />`;
+      }
+
+      // Annotations: where each curve reaches the target, and the gap between them
+      {
+        const [a, b] = cfg.lines, ta = firstReach(a.pts, TARGET), tb = firstReach(b.pts, TARGET), yT = sy(TARGET);
+        for (const [t, l] of [[ta, a], [tb, b]]) {
+          out += `<line class="sv-guide" x1="${sx(t)}" x2="${sx(t)}" y1="${yT}" y2="${yBase}" />`;
+          out += `<circle class="sv-dot" cx="${sx(t)}" cy="${yT}" r="4" stroke="${l.color}" />`;
+        }
+        // the gap between reaching the target
+        const yA = yT + 9; // just under the target line, from one crossing to the other
+        out += `<path class="sv-arrow" d="M${sx(ta) + 3} ${yA} L${sx(tb) - 3} ${yA} M${sx(tb) - 8} ${yA - 4} L${sx(tb) - 3} ${yA} L${sx(tb) - 8} ${yA + 4}" />`;
+        // under the arrow's start, clear of the later curve still climbing toward its crossing
+        out += `<text class="sv-note" x="${sx(ta) + 4}" y="${yA + 14}">${fig.dataset.panel === 'thickness' ? `about ${Math.round(tb / ta)}× later` : 'later'}</text>`;
+        if (fig.dataset.panel === 'thickness') {
+          // label each curve partway along: same shape, stretched in time
+          const [ma, va] = a.pts.find(([m]) => m >= ta * 1.6), [mb, vb] = b.pts.find(([m]) => m >= cfg.span * 0.86);
+          out += `<text class="sv-label" x="${sx(ma) - 4}" y="${sy(va) - 8}" text-anchor="end">${a.label}</text>`;
+          out += `<text class="sv-label" x="${sx(mb)}" y="${sy(vb) - 9}" text-anchor="end">${b.label}</text>`;
+        } else {
+          // both curves rise left to right, so the clear spots are above the upper one's end and below the lower one's start
+          const end = (pts) => pts.filter(([m]) => m <= cfg.span).pop()[1];
+          out += `<text class="sv-label" x="${x1}" y="${sy(end(a.pts)) - 9}" text-anchor="end">${a.label}</text>`;
+          out += `<text class="sv-label" x="${x0 + 8}" y="${sy(b.pts[0][1]) + 15}">${b.label}</text>`;
+        }
+      }
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.innerHTML = out;
+    }
+    root.querySelectorAll('.sv-panel').forEach(draw);
+  })();
+</script>

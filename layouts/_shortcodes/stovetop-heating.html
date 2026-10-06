@@ -1,0 +1,511 @@
+{{- /*
+  A stainless pan heating on a gas burner: the simplest thermal model (burner → pan → room).
+  The pan temperature is integrated step by step from
+      dT_pan/dt = (P_burner − k_loss · (T_pan − T_room)) / C_pan
+  so the burner can be changed mid-run and the curve bends toward the new equilibrium.
+  The script has three separate parts: model (state + physics, no DOM), rendering, and controls.
+  Usage in a post: {{< stovetop-heating >}}
+*/ -}}
+{{- $id := printf "sh%d" .Ordinal -}}
+<style>
+  .sh-root {
+    --sh-temp: #eb6834;        /* pan temperature (curve, dot) */
+    --sh-flame: #2a78d6;       /* burner / heat in */
+    --sh-flame-core: #a9cdf9;
+    --sh-steel-hi: #f3f4f6;
+    --sh-steel-lo: #a4a9b1;
+    --sh-steel-in: #c3c7ce;
+    --sh-metal: #50555e;       /* burner, grate */
+    --sh-warm: #d9822b;        /* subtle heat tint on the pan */
+    --stk-accent: var(--sh-flame); /* burner knob (assets/js/stovetop-knob.js) */
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+    font-size: 14px; line-height: 1.4; color: var(--primary);
+  }
+  :root[data-theme="dark"] .sh-root {
+    --sh-temp: #e8703f;
+    --sh-flame: #3987e5;
+    --sh-flame-core: #b9d7fb;
+    --sh-steel-hi: #c9ccd2;
+    --sh-steel-lo: #6b717b;
+    --sh-steel-in: #8a9099;
+    --sh-metal: #8a8f98;
+  }
+  .sh-root * { box-sizing: border-box; }
+  .sh-root svg { display: block; overflow: visible; }
+  .sh-root text { font-family: inherit; font-variant-numeric: tabular-nums; }
+
+  /* ---- Controls ---- */
+  .sh-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 28px; margin-bottom: 14px; }
+  .sh-burner { display: flex; align-items: center; gap: 6px 14px; }
+  .sh-burner-info { display: flex; flex-direction: column; gap: 1px; min-width: 9.5em; }
+  .sh-burner-title { color: var(--secondary); font-size: 13px; }
+  .sh-burner-name { font-size: 20px; font-weight: 700; line-height: 1.2; }
+  .sh-burner-detail { color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .sh-transport { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .sh-root button {
+    font: inherit; font-size: 13px; line-height: 1.2; padding: 5px 12px; cursor: pointer; white-space: nowrap;
+    color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary); border-radius: 999px;
+  }
+  .sh-root button:focus-visible { outline: 2px solid var(--sh-flame); outline-offset: 2px; }
+  .sh-root button[aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); font-weight: 600; }
+  .sh-root .sh-play { width: 6.6em; font-weight: 600; color: var(--theme); background: var(--primary); border-color: var(--primary); }
+  .sh-speed { display: inline-flex; align-items: center; gap: 4px; }
+  .sh-speed-label { color: var(--secondary); font-size: 13px; margin-right: 2px; }
+  .sh-clock { min-width: 8.5em; color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  /* ---- Panels ---- */
+  .sh-panels { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 14px; }
+  @media (max-width: 760px) { .sh-panels { grid-template-columns: minmax(0, 1fr); } }
+  .sh-panel { min-width: 0; padding: 14px; background: var(--entry); border: 1px solid var(--border); border-radius: 12px; }
+  .sh-stove svg { width: 100%; max-width: 460px; height: auto; margin: 0 auto; }
+
+  /* Flames: --sh-fx/--sh-fy (set from burner power) scale every tongue about its base */
+  .sh-flame { transform: scale(var(--sh-fx, 0), var(--sh-fy, 0)); transition: transform .3s ease; }
+  .sh-flicker { animation: sh-flicker .55s ease-in-out infinite alternate paused; }
+  .sh-loss path { stroke-dasharray: 9 5; animation: sh-rise 1.6s linear infinite paused; }
+  .sh-running .sh-flicker, .sh-running .sh-loss path { animation-play-state: running; }
+  @keyframes sh-flicker { from { transform: scale(1, 1); } to { transform: scale(.9, .84); } }
+  @keyframes sh-rise { from { stroke-dashoffset: 28; } to { stroke-dashoffset: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .sh-flicker, .sh-loss path { animation: none; }
+    .sh-flame { transition: none; }
+  }
+
+  /* Heat balance */
+  .sh-balance { display: grid; grid-template-columns: auto minmax(40px, 1fr) auto; align-items: center; gap: 6px 10px; margin-top: 10px; font-size: 13px; }
+  .sh-flow-name { color: var(--primary); }
+  .sh-flow-name small { color: var(--secondary); font-size: 12px; }
+  .sh-bar { position: relative; height: 10px; border-radius: 5px; background: var(--code-bg, rgba(127,127,127,.12)); overflow: hidden; }
+  .sh-bar span { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 0 5px 5px 0; }
+  .sh-bar .sh-in { background: var(--sh-flame); }
+  .sh-bar .sh-out { background: var(--secondary); }
+  .sh-flow-val { text-align: right; font-variant-numeric: tabular-nums; color: var(--secondary); min-width: 4.5em; }
+  .sh-net { grid-column: 1 / -1; margin: 4px 0 0; color: var(--primary); min-height: 2.8em; }
+
+  /* Graph */
+  .sh-graph { position: relative; }
+  .sh-graph svg { width: 100%; touch-action: pan-y; }
+  .sh-grid line { stroke: var(--border); }
+  .sh-axis text { fill: var(--secondary); font-size: 12px; }
+  .sh-axis .sh-axis-title { fill: var(--secondary); font-size: 12px; }
+  .sh-axis .sh-baseline { stroke: var(--tertiary); }
+  .sh-room line { stroke: var(--secondary); stroke-width: 1; stroke-dasharray: 1 4; stroke-linecap: round; }
+  .sh-eq line { stroke: var(--primary); stroke-width: 1.5; stroke-dasharray: 6 5; }
+  .sh-graph text.sh-label { font-size: 12px; paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sh-eq text { fill: var(--primary); font-weight: 600; }
+  .sh-room text { fill: var(--secondary); }
+  .sh-curve { fill: none; stroke: var(--sh-temp); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .sh-dot { fill: var(--sh-temp); stroke: var(--entry); stroke-width: 2; }
+  .sh-hover line { stroke: var(--tertiary); }
+  .sh-hover circle { fill: var(--entry); stroke: var(--sh-temp); stroke-width: 2; }
+  .sh-tip {
+    position: absolute; pointer-events: none; transform: translate(-50%, calc(-100% - 10px));
+    padding: 3px 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums;
+    color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary);
+  }
+  .sh-caption { margin: 8px 0 0; color: var(--secondary); font-size: 13px; }
+  .sh-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+
+{{- $modelJS := resources.Get "js/stovetop-model.js" | minify | fingerprint }}
+<script src="{{ $modelJS.RelPermalink }}" integrity="{{ $modelJS.Data.Integrity }}"></script>
+{{- $knobJS := resources.Get "js/stovetop-knob.js" | minify | fingerprint }}
+<script src="{{ $knobJS.RelPermalink }}" integrity="{{ $knobJS.Data.Integrity }}"></script>
+
+<div class="sh-root">
+  <div class="sh-controls">
+    <div class="sh-burner">
+      <svg class="sh-knob" aria-label="Burner power"></svg>
+      <div class="sh-burner-info">
+        <span class="sh-burner-title">Burner</span>
+        <span class="sh-burner-name"></span>
+        <span class="sh-burner-detail"></span>
+      </div>
+    </div>
+    <div class="sh-transport">
+      <button type="button" class="sh-play">▶ Play</button>
+      <button type="button" class="sh-reset">↺ Reset</button>
+      <span class="sh-speed" role="group" aria-label="Simulation speed">
+        <span class="sh-speed-label">Speed</span>
+      </span>
+      <span class="sh-clock"></span>
+    </div>
+  </div>
+
+  <div class="sh-panels">
+    <div class="sh-panel sh-stove">
+      <svg viewBox="0 0 400 240" role="img" aria-label="Side view of a stainless steel pan on a gas burner">
+        <defs>
+          <linearGradient id="{{ $id }}-steel" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="var(--sh-steel-lo)" />
+            <stop offset=".35" stop-color="var(--sh-steel-hi)" />
+            <stop offset="1" stop-color="var(--sh-steel-lo)" />
+          </linearGradient>
+          <linearGradient id="{{ $id }}-inside" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="var(--sh-steel-lo)" />
+            <stop offset="1" stop-color="var(--sh-steel-in)" />
+          </linearGradient>
+          <linearGradient id="{{ $id }}-fade" gradientUnits="userSpaceOnUse" x1="0" y1="56" x2="0" y2="106">
+            <stop offset="0" stop-color="var(--secondary)" stop-opacity="0" />
+            <stop offset="1" stop-color="var(--secondary)" stop-opacity="1" />
+          </linearGradient>
+        </defs>
+
+        <text class="sh-readout" x="180" y="34" text-anchor="middle" font-size="28" font-weight="700" fill="var(--primary)">Pan: 70°F</text>
+
+        <!-- Heat leaving the pan: fades in as the pan gets hotter than the room -->
+        <g class="sh-loss" fill="none" stroke="url(#{{ $id }}-fade)" stroke-width="2" stroke-linecap="round" opacity="0">
+          <path d="M140 106 q-6 -6.25 0 -12.5 t0 -12.5 t0 -12.5 t0 -12.5" />
+          <path d="M180 106 q-6 -6.25 0 -12.5 t0 -12.5 t0 -12.5 t0 -12.5" />
+          <path d="M220 106 q-6 -6.25 0 -12.5 t0 -12.5 t0 -12.5 t0 -12.5" />
+        </g>
+        <text x="236" y="74" font-size="13" fill="var(--secondary)">heat lost to room</text>
+
+        <!-- Stovetop, grate, burner -->
+        <rect x="0" y="226" width="400" height="10" rx="2" fill="var(--border)" />
+        <rect x="8" y="166" width="344" height="4" rx="2" fill="var(--sh-metal)" opacity=".55" />
+        <rect x="12" y="166" width="5" height="60" fill="var(--sh-metal)" opacity=".55" />
+        <rect x="343" y="166" width="5" height="60" fill="var(--sh-metal)" opacity=".55" />
+        <rect x="150" y="218" width="60" height="8" fill="var(--sh-metal)" />
+        <rect x="132" y="211" width="96" height="8" rx="2" fill="var(--sh-metal)" />
+
+        <!-- Flames: one tongue per burner port, base at the burner cap -->
+        <g class="sh-flames"></g>
+        <text x="126" y="200" font-size="13" text-anchor="end" fill="var(--secondary)">heat from burner</text>
+
+        <!-- Pan: interior, body, handle; the warm tint fades in with temperature -->
+        <line x1="272" y1="124" x2="388" y2="110" stroke="var(--sh-steel-lo)" stroke-width="9" stroke-linecap="round" />
+        <circle cx="380" cy="111" r="2.5" fill="var(--entry)" />
+        <ellipse cx="180" cy="116" rx="100" ry="11" fill="url(#{{ $id }}-inside)" stroke="var(--sh-steel-lo)" />
+        <path d="M80 116 L100 162 A80 7 0 0 0 260 162 L280 116 A100 11 0 0 1 80 116 Z" fill="url(#{{ $id }}-steel)" stroke="var(--sh-steel-lo)" />
+        <g class="sh-tint" fill="var(--sh-warm)" opacity="0">
+          <ellipse cx="180" cy="116" rx="100" ry="11" />
+          <path d="M80 116 L100 162 A80 7 0 0 0 260 162 L280 116 A100 11 0 0 1 80 116 Z" />
+        </g>
+      </svg>
+
+      <div class="sh-balance">
+        <span class="sh-flow-name">Heat in <small>from burner</small></span>
+        <span class="sh-bar"><span class="sh-in"></span></span>
+        <span class="sh-flow-val sh-val-in"></span>
+        <span class="sh-flow-name">Heat out <small>to room</small></span>
+        <span class="sh-bar"><span class="sh-out"></span></span>
+        <span class="sh-flow-val sh-val-out"></span>
+        <p class="sh-net"></p>
+      </div>
+    </div>
+
+    <div class="sh-panel sh-graph">
+      <svg role="img" aria-label="Pan temperature over time, with a dashed line at the equilibrium temperature for the current burner setting">
+        <g class="sh-grid"></g>
+        <g class="sh-axis"></g>
+        <g class="sh-room"><line /></g>
+        <g class="sh-eq"><line /></g>
+        <path class="sh-curve" />
+        <g class="sh-room"><text class="sh-label" text-anchor="end"></text></g>
+        <g class="sh-eq"><text class="sh-label" text-anchor="end"></text></g>
+        <circle class="sh-dot" r="5" />
+        <g class="sh-hover" visibility="hidden"><line /><circle r="4" /></g>
+      </svg>
+      <div class="sh-tip" hidden></div>
+      <p class="sh-caption">Equilibrium occurs when heat entering the pan from the burner equals heat leaving the pan to its surroundings.</p>
+    </div>
+  </div>
+  <p class="sh-sr" aria-live="polite"></p>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const $ = (sel) => root.querySelector(sel);
+    const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+    const SVGNS = 'http://www.w3.org/2000/svg';
+
+    // ==== Model: state and physics (no DOM in this section) =========================
+    // The equation and constants live in assets/js/stovetop-model.js (shared with stovetop-curves.html)
+    const { MODEL, DT, PRESETS, burnerWatts, equilibriumTemp, stepPanTemp } = window.StovetopModel;
+    const SAMPLE_STEPS = 20;  // record a history sample every 20 steps (1 simulated second)
+    const MAX_SAMPLES = 2400; // past this, history is thinned to every other sample
+    const INITIAL_BURNER = 70;
+    const SPEEDS = [3, 15, 60];
+
+    const heatFlows = (s) => window.StovetopModel.heatFlows(s.panTemp, s.burner);
+
+    function updatePhysics(s, dt) {
+      s.panTemp = stepPanTemp(s.panTemp, s.burner, dt);
+      s.steps += 1;
+      s.time = s.steps * dt;
+      if (s.steps % s.sampleEvery === 0) {
+        s.history.push({ time: s.time, temp: s.panTemp });
+        if (s.history.length > MAX_SAMPLES) {
+          s.history = s.history.filter((_, i) => i % 2 === 0);
+          s.sampleEvery *= 2;
+        }
+      }
+    }
+
+    const freshState = (burner, speed) => ({
+      time: 0, steps: 0, panTemp: MODEL.roomTemp, burner, speed, running: false,
+      history: [{ time: 0, temp: MODEL.roomTemp }], sampleEvery: SAMPLE_STEPS,
+    });
+
+    let state = freshState(INITIAL_BURNER, 60);
+    let pending = 0; // simulated seconds owed to the physics, carried between frames
+
+    function advance(simSeconds) {
+      pending += simSeconds;
+      while (pending >= DT) { updatePhysics(state, DT); pending -= DT; }
+    }
+
+    // ==== Rendering: reads state, writes DOM ======================================
+    const fmtW = (w) => `${Math.round(w).toLocaleString('en-US')} W`;
+    const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+    const presetName = (pct) => (PRESETS.find(([, v]) => v === pct) || [])[0];
+
+    // -- Stovetop
+    const stove = $('.sh-stove svg');
+    const flames = $('.sh-flames');
+    for (let i = 0; i < 9; i++) {
+      const x = 138 + i * 10.5;
+      const tilt = (i - 4) * 3;
+      const g = document.createElementNS(SVGNS, 'g');
+      g.setAttribute('transform', `translate(${x} 211) rotate(${tilt})`);
+      g.innerHTML =
+        `<g class="sh-flame"><g class="sh-flicker" style="animation-duration:${(0.45 + ((i * 37) % 23) / 100).toFixed(2)}s;animation-delay:-${((i * 0.13) % 0.5).toFixed(2)}s">` +
+        '<path d="M-5 0 C-5.5 -14 -1.5 -30 0 -46 C1.5 -30 5.5 -14 5 0 Z" fill="var(--sh-flame)" opacity=".85" />' +
+        '<path d="M-2.5 0 C-2.8 -7 -0.8 -14 0 -20 C0.8 -14 2.8 -7 2.5 0 Z" fill="var(--sh-flame-core)" />' +
+        '</g></g>';
+      flames.appendChild(g);
+    }
+    const readout = $('.sh-readout');
+    const loss = $('.sh-loss');
+    const tint = $('.sh-tint');
+
+    function renderStove(s) {
+      const p = s.burner / 100;
+      stove.style.setProperty('--sh-fx', p ? 0.75 + 0.35 * p : 0);
+      stove.style.setProperty('--sh-fy', p ? 0.3 + 0.7 * p : 0);
+      readout.textContent = `Pan: ${Math.round(s.panTemp)}°F`;
+      loss.setAttribute('opacity', clamp(heatFlows(s).heatOut / MODEL.maxPower, 0, 1).toFixed(3));
+      tint.setAttribute('opacity', (0.22 * clamp((s.panTemp - 150) / 450, 0, 1)).toFixed(3));
+    }
+
+    // -- Heat balance
+    const barIn = $('.sh-in'), barOut = $('.sh-out');
+    const valIn = $('.sh-val-in'), valOut = $('.sh-val-out'), net = $('.sh-net');
+
+    function renderBalance(s) {
+      const f = heatFlows(s);
+      barIn.style.width = `${clamp(f.heatIn / MODEL.maxPower, 0, 1) * 100}%`;
+      barOut.style.width = `${clamp(Math.abs(f.heatOut) / MODEL.maxPower, 0, 1) * 100}%`;
+      valIn.textContent = fmtW(f.heatIn);
+      valOut.textContent = fmtW(f.heatOut);
+      const rate = Math.abs(f.net / MODEL.heatCapacity).toFixed(1);
+      if (Math.abs(f.net) < 3) {
+        net.textContent = s.burner === 0
+          ? 'Burner off and pan at room temperature: no heat flows, nothing changes.'
+          : 'Heat in ≈ heat out: the pan is (very nearly) at equilibrium, so its temperature holds steady.';
+      } else if (f.net > 0) {
+        net.textContent = `Heat in exceeds heat out by ${fmtW(f.net)}, so the pan warms at ${rate}°F per second.`;
+      } else {
+        net.textContent = `Heat out exceeds heat in by ${fmtW(-f.net)}, so the pan cools at ${rate}°F per second.`;
+      }
+    }
+
+    // -- Graph
+    const graph = $('.sh-graph svg');
+    const gridG = $('.sh-grid'), axisG = $('.sh-axis');
+    const eqLine = $('.sh-eq line'), eqText = $('.sh-eq text');
+    const roomLine = $('.sh-room line'), roomText = $('.sh-room text');
+    const curve = $('.sh-curve'), dot = $('.sh-dot');
+    const hoverG = $('.sh-hover'), hoverLine = $('.sh-hover line'), hoverDot = $('.sh-hover circle');
+    const tip = $('.sh-tip');
+    const M = { top: 12, right: 12, bottom: 40, left: 50 };
+    const Y_MAX = 650;
+    const X_SPANS = [10, 15, 20, 30, 45, 60, 90, 120]; // minutes; the axis widens through these
+    let W = 0, H = 0, xMax = 0, hoverPx = null;
+
+    const xSpanFor = (sec) => (X_SPANS.find((m) => m * 60 >= sec) || Math.ceil(sec / 3600) * 60) * 60;
+    const plotW = () => W - M.left - M.right;
+    const plotH = () => H - M.top - M.bottom;
+    const sx = (t) => M.left + (t / xMax) * plotW();
+    const sy = (temp) => M.top + (1 - temp / Y_MAX) * plotH();
+
+    // Axes and gridlines: redrawn only when the size or time span changes
+    function drawAxes() {
+      const x0 = M.left, x1 = W - M.right, yBase = sy(0);
+      let grid = '', axis = '';
+      for (let temp = 0; temp <= 600; temp += 100) {
+        const y = sy(temp).toFixed(1);
+        if (temp) grid += `<line x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" />`;
+        axis += `<text x="${x0 - 8}" y="${y}" dy="0.32em" text-anchor="end">${temp}°F</text>`;
+      }
+      const spanMin = xMax / 60, maxTicks = Math.max(2, Math.floor(plotW() / 48));
+      const step = [1, 2, 5, 10, 15, 30, 60, 120].find((s) => spanMin / s <= maxTicks) || 240;
+      for (let m = 0; m <= spanMin + 1e-9; m += step) {
+        axis += `<text x="${sx(m * 60).toFixed(1)}" y="${yBase + 18}" text-anchor="middle">${m}</text>`;
+      }
+      axis += `<line class="sh-baseline" x1="${x0}" x2="${x1}" y1="${yBase}" y2="${yBase}" />`;
+      axis += `<text class="sh-axis-title" x="${(x0 + x1) / 2}" y="${H - 4}" text-anchor="middle">Elapsed time (simulated minutes)</text>`;
+      gridG.innerHTML = grid;
+      axisG.innerHTML = axis;
+    }
+
+    function layoutGraph() {
+      const w = graph.clientWidth;
+      const span = xSpanFor(state.time);
+      if (w === W && span === xMax) return;
+      W = w; xMax = span;
+      H = Math.round(clamp(W * 0.62, 240, 340));
+      graph.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      graph.style.height = `${H}px`;
+      drawAxes();
+    }
+
+    function renderGraph(s) {
+      layoutGraph();
+      const x0 = M.left, x1 = W - M.right;
+
+      // Room temperature (dotted) and the equilibrium for the current burner setting (dashed)
+      const yRoom = sy(MODEL.roomTemp).toFixed(1);
+      roomLine.setAttribute('x1', x0); roomLine.setAttribute('x2', x1);
+      roomLine.setAttribute('y1', yRoom); roomLine.setAttribute('y2', yRoom);
+      roomText.setAttribute('x', x1 - 4); roomText.setAttribute('y', +yRoom + 15);
+      roomText.textContent = `Room temperature: ${MODEL.roomTemp}°F`;
+      roomText.style.display = s.burner === 0 ? 'none' : '';
+
+      const eq = equilibriumTemp(s.burner);
+      const yEq = sy(eq).toFixed(1);
+      eqLine.setAttribute('x1', x0); eqLine.setAttribute('x2', x1);
+      eqLine.setAttribute('y1', yEq); eqLine.setAttribute('y2', yEq);
+      // Label on the side away from the curve, so a pan cooling from above doesn't run through it
+      const below = s.panTemp > eq + 1 && (s.burner === 0 || yRoom - yEq > 34);
+      eqText.setAttribute('x', x1 - 4); eqText.setAttribute('y', below ? +yEq + 16 : yEq - 7);
+      eqText.textContent = s.burner === 0
+        ? `Equilibrium = room temperature: ${MODEL.roomTemp}°F`
+        : `Equilibrium temperature: ${Math.round(eq)}°F`;
+
+      // History samples, then the live point
+      let d = '';
+      for (const p of s.history) d += `${d ? 'L' : 'M'}${sx(p.time).toFixed(1)} ${sy(p.temp).toFixed(1)}`;
+      const cx = sx(s.time).toFixed(1), cy = sy(s.panTemp).toFixed(1);
+      d += `L${cx} ${cy}`;
+      curve.setAttribute('d', d);
+      dot.setAttribute('cx', cx); dot.setAttribute('cy', cy);
+
+      renderHover(s);
+    }
+
+    // Crosshair + tooltip for reading any past point on the curve
+    function renderHover(s) {
+      if (hoverPx === null || s.time === 0 || hoverPx < M.left || hoverPx > W - M.right) {
+        hoverG.setAttribute('visibility', 'hidden');
+        tip.hidden = true;
+        return;
+      }
+      const t = clamp(((hoverPx - M.left) / plotW()) * xMax, 0, s.time);
+      const i = Math.round(t / (s.sampleEvery * DT));
+      const p = i < s.history.length ? s.history[i] : { time: s.time, temp: s.panTemp };
+      const x = sx(p.time), y = sy(p.temp);
+      hoverLine.setAttribute('x1', x); hoverLine.setAttribute('x2', x);
+      hoverLine.setAttribute('y1', M.top); hoverLine.setAttribute('y2', sy(0));
+      hoverDot.setAttribute('cx', x); hoverDot.setAttribute('cy', y);
+      hoverG.setAttribute('visibility', 'visible');
+      tip.textContent = `${fmtClock(p.time)} · ${Math.round(p.temp)}°F`;
+      tip.hidden = false;
+      const box = graph.getBoundingClientRect(), panel = graph.parentElement.getBoundingClientRect();
+      const half = tip.offsetWidth / 2 + 4;
+      tip.style.left = `${clamp(box.left - panel.left + x, half, panel.width - half)}px`;
+      tip.style.top = `${box.top - panel.top + y}px`;
+    }
+
+    // -- Controls display
+    const burnerName = $('.sh-burner-name'), burnerDetail = $('.sh-burner-detail');
+    const playBtn = $('.sh-play'), clock = $('.sh-clock');
+
+    function renderControls(s) {
+      const name = presetName(s.burner);
+      knob.render(s.burner);
+      burnerName.textContent = name || `${s.burner}%`;
+      burnerDetail.textContent = `${s.burner}% · ${fmtW(burnerWatts(s.burner))} heat input`;
+      root.querySelectorAll('.sh-speed button').forEach((b) => b.setAttribute('aria-pressed', +b.dataset.v === s.speed));
+      playBtn.textContent = s.running ? '❚❚ Pause' : '▶ Play';
+      playBtn.setAttribute('aria-label', s.running ? 'Pause' : 'Play');
+      clock.textContent = `Elapsed: ${fmtClock(s.time)}`;
+      root.classList.toggle('sh-running', s.running);
+    }
+
+    function render() {
+      renderStove(state);
+      renderBalance(state);
+      renderGraph(state);
+      renderControls(state);
+    }
+
+    // ==== Controls: user input → state, plus the animation loop ===================
+    const live = $('.sh-sr');
+    let announceTimer;
+    const announce = (msg) => { clearTimeout(announceTimer); announceTimer = setTimeout(() => (live.textContent = msg), 400); };
+
+    const speedGroup = $('.sh-speed');
+    for (const v of SPEEDS) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = `${v}×`; b.dataset.v = v;
+      speedGroup.appendChild(b);
+    }
+
+    // Changing the burner changes heat input only; the pan temperature carries on from where it is
+    function setBurner(pct) {
+      state.burner = clamp(Math.round(pct), 0, 100);
+      render();
+      announce(`Burner ${state.burner}%. Equilibrium ${Math.round(equilibriumTemp(state.burner))}°F.`);
+    }
+
+    const knob = window.StovetopKnob($('.sh-knob'), { presets: PRESETS, onChange: setBurner });
+    speedGroup.addEventListener('click', (e) => {
+      if (!e.target.dataset.v) return;
+      state.speed = +e.target.dataset.v;
+      render();
+    });
+
+    let lastFrame = null, visible = true;
+    function frame(now) {
+      lastFrame = null;
+      if (!state.running || !visible) return;
+      if (frame.prev !== undefined) advance(Math.min((now - frame.prev) / 1000, 0.1) * state.speed);
+      frame.prev = now;
+      render();
+      lastFrame = requestAnimationFrame(frame);
+    }
+    function startLoop() {
+      if (lastFrame !== null || !state.running || !visible) return;
+      frame.prev = undefined;
+      lastFrame = requestAnimationFrame(frame);
+    }
+
+    playBtn.addEventListener('click', () => {
+      state.running = !state.running;
+      render();
+      startLoop();
+      announce(state.running ? 'Playing' : 'Paused');
+    });
+    $('.sh-reset').addEventListener('click', () => {
+      state = freshState(INITIAL_BURNER, state.speed);
+      pending = 0;
+      render();
+      announce('Reset: pan at room temperature');
+    });
+
+    graph.addEventListener('pointermove', (e) => { hoverPx = e.clientX - graph.getBoundingClientRect().left; renderHover(state); });
+    graph.addEventListener('pointerdown', (e) => { hoverPx = e.clientX - graph.getBoundingClientRect().left; renderHover(state); });
+    graph.addEventListener('pointerleave', () => { hoverPx = null; renderHover(state); });
+
+    // Pause the loop (not the simulation state) while the widget is scrolled out of view
+    new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; startLoop(); }).observe(root);
+    new ResizeObserver(() => { W = 0; renderGraph(state); }).observe(graph.parentElement);
+
+    render();
+  })();
+</script>

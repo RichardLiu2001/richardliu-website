@@ -1,0 +1,112 @@
+{{- /*
+  Static figure: browning depends on temperature AND time. Regions of under-browned / desired browning / burnt
+  over (minutes held at a steady temperature, surface temperature), plus three example surfaces held at 300, 350
+  and 400°F, each drawn in crust color as it browns. Everything comes from the accumulated-browning model the
+  simulators use (assets/js/stovetop-outcome.js: browningRate, steadyTempFor, browningColor).
+  Usage in a post: {{< stovetop-browning-regions >}}
+*/ -}}
+<style>
+  .sbr-root {
+    --sbr-good: #2f8f5b; --sbr-bad: #c2410c;
+    margin: 0 0 var(--content-gap); padding: 14px; font-size: 14px; color: var(--primary);
+    background: var(--entry); border: 1px solid var(--border); border-radius: 12px; position: relative;
+  }
+  :root[data-theme="dark"] .sbr-root { --sbr-good: #4cc38a; --sbr-bad: #f07a4a; }
+  .sbr-root * { box-sizing: border-box; }
+  .sbr-root svg { display: block; width: 100%; overflow: visible; }
+  .sbr-root text { font-family: inherit; font-variant-numeric: tabular-nums; }
+  .sbr-grid line { stroke: var(--border); }
+  .sbr-axis text { fill: var(--secondary); font-size: 12px; }
+  .sbr-axis .sbr-baseline { stroke: var(--tertiary); }
+  .sbr-good-fill { fill: var(--sbr-good); fill-opacity: .14; }
+  .sbr-burnt-fill { fill: var(--sbr-bad); fill-opacity: .12; }
+  .sbr-good-edge { fill: none; stroke: var(--sbr-good); stroke-opacity: .7; }
+  .sbr-burnt-edge { fill: none; stroke: var(--sbr-bad); stroke-opacity: .7; }
+  .sbr-region { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .sbr-region.sbr-under { fill: var(--secondary); }
+  .sbr-region.sbr-good { fill: var(--sbr-good); }
+  .sbr-region.sbr-bad { fill: var(--sbr-bad); }
+  .sbr-bar-edge { fill: none; stroke: var(--entry); stroke-width: 1.5; }
+  .sbr-mark { fill: var(--entry); stroke: var(--primary); stroke-width: 1.5; }
+  .sbr-label { font-size: 12px; fill: var(--primary); paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sbr-label.sbr-strong { font-weight: 700; }
+  .sbr-root .sbr-caption { margin: 8px 0 0; font-size: 13px; color: var(--secondary); }
+</style>
+
+{{- $modelJS := resources.Get "js/stovetop-model.js" | minify | fingerprint }}
+<script src="{{ $modelJS.RelPermalink }}" integrity="{{ $modelJS.Data.Integrity }}"></script>
+{{- $outcomeJS := resources.Get "js/stovetop-outcome.js" | minify | fingerprint }}
+<script src="{{ $outcomeJS.RelPermalink }}" integrity="{{ $outcomeJS.Data.Integrity }}"></script>
+
+<figure class="sbr-root">
+  <svg role="img" aria-label="Regions of under-browned, desired browning and burnt, by surface temperature and minutes held. At 300°F a surface browns well after about 3.5 minutes; at 350°F after about 1.7 minutes and burns after about 5.6; at 400°F browns in under a minute and burns after about 2.8."></svg>
+  <p class="sbr-caption">So a surface at 350°F can be pale, perfect or burnt: it depends on how long it has been there. That's why the simulators show browning as a strip that builds up over time, not as a temperature band like the center's. (A simplified model, not Maillard chemistry.)</p>
+</figure>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const svg = root.querySelector('svg');
+    const OUT = window.StovetopOutcome, { BROWNING_LEVEL, browningRate, steadyTempFor, browningColor } = OUT;
+    const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+    const SPAN = 600, Y_MIN = 200, Y_MAX = 500, EXAMPLES = [300, 350, 400];
+    const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+    const UID = '{{ printf "sbr%d" .Ordinal }}';
+
+    function draw() {
+      const W = svg.clientWidth, narrow = W < 480;
+      const H = Math.round(clamp(W * 0.58, 280, 400));
+      const M = { top: 10, right: narrow ? 12 : 56, bottom: 40, left: 50 };
+      const pw = W - M.left - M.right, ph = H - M.top - M.bottom;
+      const sx = (t) => M.left + (t / SPAN) * pw, sy = (T) => M.top + (1 - (T - Y_MIN) / (Y_MAX - Y_MIN)) * ph;
+      const x0 = M.left, x1 = W - M.right, yTop = sy(Y_MAX), yBase = sy(Y_MIN);
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.style.height = `${H}px`;
+
+      // Regions: where a steady temperature reaches "good" (level 1) and "burnt" by each moment
+      const N = 120, ts = Array.from({ length: N + 1 }, (_, i) => (i / N) * SPAN);
+      const curve = (level) => ts.map((t) => `${sx(t).toFixed(1)} ${clamp(sy(steadyTempFor(level, t)), yTop, yBase).toFixed(1)}`);
+      const good = curve(BROWNING_LEVEL.good), burnt = curve(BROWNING_LEVEL.burnt);
+      let out = `<path class="sbr-good-fill" d="M${good.join(' L')} L${burnt.slice().reverse().join(' L')} Z" />`;
+      out += `<path class="sbr-burnt-fill" d="M${burnt.join(' L')} L${x1} ${yTop} L${x0} ${yTop} Z" />`;
+      out += `<path class="sbr-good-edge" d="M${good.join(' L')}" /><path class="sbr-burnt-edge" d="M${burnt.join(' L')}" />`;
+
+      // Grid and axes
+      out += '<g class="sbr-grid">';
+      for (let T = Y_MIN + 50; T <= Y_MAX; T += 50) out += `<line x1="${x0}" x2="${x1}" y1="${sy(T)}" y2="${sy(T)}" />`;
+      out += '</g><g class="sbr-axis">';
+      for (let T = Y_MIN; T <= Y_MAX; T += 50) out += `<text x="${x0 - 8}" y="${sy(T)}" dy="0.32em" text-anchor="end">${T}°F</text>`;
+      for (let m = 0; m <= 10; m += pw / 10 >= 30 ? 1 : 2) out += `<text x="${sx(m * 60)}" y="${yBase + 18}" text-anchor="middle">${m}</text>`;
+      out += `<line class="sbr-baseline" x1="${x0}" x2="${x1}" y1="${yBase}" y2="${yBase}" />`;
+      out += `<text x="${(x0 + x1) / 2}" y="${H - 4}" text-anchor="middle">Minutes held at that surface temperature</text></g>`;
+
+      // Region names
+      out += `<text class="sbr-region sbr-bad" x="${x1 - 8}" y="${yTop + 18}" text-anchor="end">Burnt</text>`;
+      out += `<text class="sbr-region sbr-good" x="${sx(510)}" y="${sy((steadyTempFor(1, 510) + steadyTempFor(BROWNING_LEVEL.burnt, 510)) / 2) }" dy="0.35em" text-anchor="middle">Desired browning</text>`;
+      out += `<text class="sbr-region sbr-under" x="${x0 + 8}" y="${yBase - 10}">Under-browned</text>`;
+
+      // Example surfaces held at one temperature: a bar in crust color, browning as time passes
+      let defs = '';
+      EXAMPLES.forEach((T, i) => {
+        const y = sy(T), id = `${UID}-ex${i}`, rate = browningRate(T), tGood = 1 / rate, tBurnt = BROWNING_LEVEL.burnt / rate;
+        const stops = Array.from({ length: 41 }, (_, k) => {
+          const t = (k / 40) * SPAN;
+          return `<stop offset="${(k / 40).toFixed(3)}" stop-color="${browningColor(rate * t)}" />`;
+        }).join('');
+        defs += `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x0}" x2="${x1}" y1="0" y2="0">${stops}</linearGradient>`;
+        out += `<rect x="${x0}" y="${y - 6}" width="${pw}" height="12" rx="3" fill="url(#${id})" /><rect class="sbr-bar-edge" x="${x0}" y="${y - 6}" width="${pw}" height="12" rx="3" />`;
+        out += `<text class="sbr-label sbr-strong" x="${narrow ? x0 + 4 : x1 + 6}" y="${narrow ? y - 10 : y}" dy="0.35em">${T}°F</text>`;
+        for (const [t, label] of [[tGood, 'good'], [tBurnt, 'burnt']]) {
+          if (t > SPAN) continue;
+          out += `<circle class="sbr-mark" cx="${sx(t)}" cy="${y}" r="4" />`;
+          out += `<text class="sbr-label" x="${sx(t) + 6}" y="${y - 11}">${label} at ${fmtClock(t)}</text>`;
+        }
+      });
+      svg.innerHTML = `<defs>${defs}</defs>${out}`;
+    }
+
+    let lastW = 0;
+    new ResizeObserver(() => { if (svg.clientWidth !== lastW) { lastW = svg.clientWidth; draw(); } }).observe(root);
+    draw();
+  })();
+</script>

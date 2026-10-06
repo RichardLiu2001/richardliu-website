@@ -1,0 +1,1130 @@
+{{- /*
+  Cooking-outcome simulator, extended: stovetop-outcome.html plus what the reader controls:
+    food thickness            sets how fast heat moves from the faces to the center (∝ 1 / thickness²)
+    initial food temperature  both faces and the center start here
+    removing the food         cuts off the pan, but the faces keep heating the center (carryover cooking)
+    flipping                  the food has two faces, Side A and Side B; only the one on the pan gets pan heat.
+                              A flip changes which face that is; it never moves any temperature.
+  Plus "Diagnosing a bad cook": failed cooks, what the model says went wrong, and fixes, all runs of this same simulator.
+  Layers, kept separate:
+    physics   assets/js/stovetop-model.js    pan / Side A / center / Side B temperatures (stepFoodSided)
+    simulator assets/js/stovetop-sim.js      state + the reader's actions (add, flip, remove, burner, ...)
+    outcome   assets/js/stovetop-outcome.js  center target range, per-side accumulated browning, statuses
+    presets   assets/js/stovetop-presets.js  diagnosis data + a runner that fires actions on simulated time
+    timeline  assets/js/stovetop-timeline.js static drawing of a finished run (the diagnosis graphs)
+    rendering this file                      schematic (assets/js/stovetop-scene.js), three graphs, status
+  Usage in a post: {{< stovetop-outcome-extended >}}
+*/ -}}
+<style>
+  .sx-root {
+    --sx-pan: #eb6834;         /* series colors, same as stovetop-food.html */
+    --sx-surface: #4a3aa7;
+    --sx-center: #1baf7a;
+    --sx-flame: #2a78d6;
+    --sx-good: #2f8f5b;        /* status: on target */
+    --sx-bad: #c2410c;         /* status: burnt / overdone */
+    --stk-accent: var(--sx-flame);
+    --stl-surface: var(--sx-surface); --stl-center: var(--sx-center); --stl-good: var(--sx-good); --stl-bad: var(--sx-bad); /* stovetop-timeline.js */
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+    font-size: 14px; line-height: 1.4; color: var(--primary);
+  }
+  :root[data-theme="dark"] .sx-root {
+    --sx-pan: #d95926;
+    --sx-surface: #9085e9;
+    --sx-center: #199e70;
+    --sx-flame: #3987e5;
+    --sx-good: #4cc38a;
+    --sx-bad: #f07a4a;
+  }
+  .sx-root * { box-sizing: border-box; }
+  .sx-root svg { display: block; overflow: visible; }
+  .sx-root text { font-family: inherit; font-variant-numeric: tabular-nums; }
+
+  /* ---- Takeaway ---- */
+  .sx-takeaway { margin: 0 0 16px; }
+  .sx-rules { display: flex; flex-wrap: wrap; gap: 6px 28px; margin: 8px 0 0; font-size: 15px; }
+  .sx-rules b { font-weight: 700; padding-bottom: 1px; border-bottom: 3px solid var(--sx-key); margin-right: 6px; }
+  .sx-rules span { color: var(--secondary); }
+  .sx-root .sx-punch { margin: 8px 0 0; font-size: 15px; font-weight: 600; }
+
+  /* ---- Controls ---- */
+  .sx-bar-sentinel { height: 1px; }
+  .sx-bar-burner { color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .sx-bar-burner b { color: var(--primary); }
+  .sx-burner { display: flex; align-items: center; gap: 6px 14px; }
+  .sx-burner-info { display: flex; flex-direction: column; gap: 1px; min-width: 9.5em; }
+  .sx-burner-title { color: var(--secondary); font-size: 13px; }
+  .sx-burner-name { font-size: 20px; font-weight: 700; line-height: 1.2; }
+  .sx-burner-detail { color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .sx-transport { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .sx-root button {
+    font: inherit; font-size: 13px; line-height: 1.2; padding: 5px 12px; cursor: pointer; white-space: nowrap;
+    color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary); border-radius: 999px;
+  }
+  .sx-root button:focus-visible { outline: 2px solid var(--sx-flame); outline-offset: 2px; }
+  .sx-root button[aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); font-weight: 600; }
+  .sx-root .sx-play { width: 6.6em; font-weight: 600; color: var(--theme); background: var(--primary); border-color: var(--primary); }
+  .sx-root .sx-add { font-weight: 600; border-color: var(--sx-surface); box-shadow: inset 0 0 0 1px var(--sx-surface); }
+  .sx-root .sx-add:disabled, .sx-root .sx-remove:disabled { cursor: default; font-weight: 400; color: var(--secondary); border-color: var(--border); box-shadow: none; }
+  .sx-root .sx-flip { font-weight: 600; border-color: var(--sx-surface); box-shadow: inset 0 0 0 1px var(--sx-surface); }
+  .sx-root .sx-flip:disabled { cursor: default; font-weight: 400; color: var(--secondary); border-color: var(--border); box-shadow: none; }
+  .sx-root .sx-remove { font-weight: 600; border-color: var(--sx-center); box-shadow: inset 0 0 0 1px var(--sx-center); }
+  .sx-speed { display: inline-flex; align-items: center; gap: 4px; }
+  .sx-speed-label { color: var(--secondary); font-size: 13px; margin-right: 2px; }
+  .sx-clock { min-width: 8.5em; color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  /* ---- Layout ---- */
+  .sx-graphs { display: grid; gap: 14px; min-width: 0; }
+  .sx-side { display: grid; gap: 14px; }
+
+  /* Wide: [controls column | food, schematic, status | graphs]. The controls column stays pinned. */
+  @media (min-width: 1000px) {
+    .sx-main {
+      display: grid; grid-template-columns: 148px minmax(0, 5fr) minmax(0, 7fr); gap: 14px; align-items: start;
+      grid-template-areas: "rail setup setup" "rail side graphs";
+    }
+    .sx-rail { grid-area: rail; }
+    .sx-setup { grid-area: setup; }
+    .sx-side { grid-area: side; }
+    .sx-graphs { grid-area: graphs; }
+    .sx-rail { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .sx-rail .sx-burner { flex-direction: column; gap: 0; }
+    .sx-rail .sx-knob { width: 100%; }
+    .sx-rail .sx-burner-info { min-width: 0; align-items: center; text-align: center; }
+    .sx-rail .sx-burner-name { font-size: 17px; }
+    .sx-rail .sx-burner-detail { font-size: 12px; }
+    .sx-rail .sx-transport { flex-direction: column; align-items: stretch; gap: 7px; }
+    .sx-rail .sx-transport > button { width: 100%; text-align: center; font-size: 12.5px; }
+    .sx-root .sx-rail .sx-play { width: 100%; }
+    .sx-rail .sx-speed { flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+    .sx-rail .sx-speed-label { width: 100%; text-align: center; margin: 0 0 2px; font-size: 12px; }
+    .sx-rail .sx-speed button { padding: 4px 9px; font-size: 12px; }
+    .sx-rail .sx-clock { min-width: 0; text-align: center; font-size: 12px; }
+    .sx-rail .sx-bar-sentinel, .sx-rail .sx-bar-burner { display: none; }
+  }
+
+  /* Narrow: everything stacks; the knob scrolls away but the bar of buttons stays pinned to the top */
+  @media (max-width: 999px) {
+    .sx-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+    .sx-rail { display: contents; } /* so the bar's sticky range is the whole visual, not just this column */
+    .sx-burner { margin-bottom: -6px; }
+    .sx-bar {
+      position: sticky; top: 0; z-index: 5;
+      margin: 0 -10px; padding: 8px 10px;
+      background: var(--theme); border-bottom: 1px solid transparent; border-radius: 0 0 10px 10px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .sx-bar.sx-stuck { border-bottom-color: var(--border); box-shadow: 0 6px 12px -8px rgba(0, 0, 0, .25); }
+  }
+  @media (max-width: 600px) {
+    /* Phones: a tighter bar so it doesn't eat the screen */
+    .sx-bar .sx-transport { gap: 6px; }
+    .sx-bar button { font-size: 12px; padding: 4px 9px; }
+    .sx-root .sx-bar .sx-play { width: 5.8em; }
+    .sx-bar .sx-speed-label { display: none; }
+    .sx-bar .sx-clock, .sx-bar-burner { min-width: 0; font-size: 12px; }
+  }
+  .sx-panel { min-width: 0; padding: 14px; background: var(--entry); border: 1px solid var(--border); border-radius: 12px; }
+  .sx-scene svg { width: 100%; max-width: 520px; height: auto; margin: 0 auto; }
+  .sx-readout { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin: 8px 0 0; font-size: 13px; color: var(--secondary); }
+  .sx-readout span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .sx-readout i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+  .sx-readout b { color: var(--primary); font-variant-numeric: tabular-nums; }
+  .sx-scene .sx-lesson { margin-top: 10px; }
+  .sx-scene .sx-hint { margin-top: 2px; }
+
+  /* ---- Food setup (before cooking) ---- */
+  .sx-setup { display: grid; gap: 12px 28px; }
+  @media (min-width: 700px) {
+    .sx-setup { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .sx-setup-title { grid-column: 1 / -1; margin-bottom: -4px; }
+  }
+  .sx-setup-title { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-weight: 700; }
+  .sx-setup-title span { font-weight: 400; font-size: 12.5px; color: var(--secondary); }
+  .sx-field-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .sx-field-head label { font-size: 13px; color: var(--secondary); }
+  .sx-field-head output { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .sx-root input[type="range"] { display: block; width: 100%; margin: 4px 0 0; accent-color: var(--sx-flame); cursor: pointer; }
+  .sx-root input[type="range"]:disabled { cursor: default; opacity: .5; }
+  .sx-ends { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; color: var(--secondary); }
+  .sx-ends button { font-size: 12px; padding: 2px 9px; }
+  .sx-root .sx-lesson { margin: 4px 0 0; font-size: 13px; font-weight: 600; }
+
+  /* ---- Status ---- */
+  .sx-status-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .sx-status-title { font-weight: 700; }
+  .sx-cooktime { color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .sx-stat { display: grid; grid-template-columns: 7.2em auto 1fr; align-items: center; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+  .sx-stat-name { font-size: 13px; color: var(--secondary); }
+  .sx-stat-name i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; background: var(--sx-key); }
+  .sx-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; white-space: nowrap; }
+  .sx-badge svg { width: 16px; height: 16px; flex: none; }
+  .sx-badge[data-state="good"] { color: var(--sx-good); }
+  .sx-badge[data-state="bad"] { color: var(--sx-bad); }
+  .sx-badge[data-state="wait"], .sx-badge[data-state="none"] { color: var(--secondary); }
+  .sx-stat-detail { font-size: 12.5px; color: var(--secondary); text-align: right; font-variant-numeric: tabular-nums; }
+  /* The detail goes on its own line under the status (the middle column is narrow) */
+  .sx-stat { grid-template-columns: 6.6em 1fr; }
+  .sx-stat-detail { grid-column: 2; text-align: left; }
+  .sx-verdict { margin-top: 6px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 13.5px; }
+  .sx-verdict b { display: block; font-size: 15px; }
+  .sx-verdict b svg { display: inline-block; width: 16px; height: 16px; vertical-align: -3px; margin-right: 6px; }
+  .sx-verdict.sx-aligned { border-color: var(--sx-good); box-shadow: inset 0 0 0 1px var(--sx-good); }
+  .sx-verdict.sx-aligned b { color: var(--sx-good); }
+  .sx-hint { margin: 10px 0 0; font-size: 12.5px; color: var(--secondary); }
+  .sx-status .sx-lesson { margin-top: 10px; }
+
+  /* ---- Graphs ---- */
+  .sx-graph { position: relative; }
+  .sx-graph-title { margin: 0; font-weight: 700; }
+  .sx-graph-sub { margin: 0 0 6px; font-size: 13px; color: var(--secondary); }
+  .sx-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 6px; padding: 0; list-style: none; font-size: 13px; color: var(--secondary); }
+  .sx-legend li { margin: 0; display: inline-flex; align-items: center; gap: 6px; }
+  .sx-legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
+  .sx-root i.sx-sw-dash { height: 0 !important; background: none !important; border-radius: 0; border-top: 2.5px dashed var(--sx-surface); }
+  .sx-legend i.sx-swatch-band { height: 10px; border-radius: 2px; background: color-mix(in srgb, var(--sx-good) 22%, transparent); border: 1px solid color-mix(in srgb, var(--sx-good) 60%, transparent); }
+  .sx-graph svg { width: 100%; touch-action: pan-y; }
+  .sx-grid line { stroke: var(--border); }
+  .sx-axis text { fill: var(--secondary); font-size: 12px; }
+  .sx-axis .sx-baseline { stroke: var(--tertiary); }
+  .sx-target-fill { fill: var(--sx-good); fill-opacity: .16; }
+  .sx-target-edge { stroke: var(--sx-good); stroke-opacity: .7; stroke-width: 1; }
+  .sx-burnt-fill { fill: var(--sx-bad); fill-opacity: .14; }
+  .sx-burnt-edge { stroke: var(--sx-bad); stroke-opacity: .7; stroke-width: 1; }
+  .sx-region-label { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .sx-region-label.sx-under { fill: var(--secondary); }
+  .sx-region-label.sx-good { fill: var(--sx-good); }
+  .sx-region-label.sx-bad { fill: var(--sx-bad); }
+  /* Outcome strips under the graph: same x axis */
+  .sx-strip-track { fill: var(--code-bg, rgba(127,127,127,.1)); }
+  .sx-seg-under, .sx-seg-underdone { fill: var(--tertiary); fill-opacity: .35; }
+  .sx-seg-good, .sx-seg-target { fill: var(--sx-good); fill-opacity: .35; }
+  .sx-seg-burnt, .sx-seg-overdone { fill: var(--sx-bad); fill-opacity: .35; }
+  .sx-seg-ready { fill: var(--sx-good); fill-opacity: .7; }
+  .sx-seg-tick { stroke: var(--entry); stroke-width: 1.5; }
+  .sx-strip-text { font-size: 10.5px; fill: var(--primary); }
+  .sx-strip-row { font-size: 11.5px; fill: var(--secondary); }
+  .sx-strip-now { font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+  .sx-strip-now.sx-k-good { fill: var(--sx-good); }
+  .sx-strip-now.sx-k-bad { fill: var(--sx-bad); }
+  .sx-strip-now.sx-k-wait { fill: var(--secondary); }
+  .sx-playhead { stroke: var(--primary); stroke-width: 1; stroke-opacity: .45; }
+  .sx-markers line { stroke: var(--primary); stroke-width: 1.2; stroke-dasharray: 3 3; }
+  .sx-flips line { stroke: var(--secondary); stroke-width: 1; stroke-dasharray: 1 3; stroke-linecap: round; }
+  .sx-flips text { fill: var(--secondary); font-size: 11px; }
+  .sx-dot-hollow { fill: var(--entry) !important; stroke: var(--sx-surface); stroke-width: 2.5; }
+  .sx-frozen { fill: var(--entry); stroke-width: 2.5; }
+  .sx-curve { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .sx-dot { stroke: var(--entry); stroke-width: 2; }
+  .sx-graph text.sx-label { font-size: 12px; paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sx-label.sx-strong { fill: var(--primary); font-weight: 600; }
+  .sx-label.sx-muted { fill: var(--secondary); }
+  .sx-label.sx-good { fill: var(--sx-good); font-weight: 600; }
+  .sx-hover line { stroke: var(--tertiary); }
+  .sx-hover circle { fill: var(--entry); stroke-width: 2; }
+  .sx-tip {
+    position: absolute; pointer-events: none; transform: translate(-50%, calc(-100% - 12px)); z-index: 1;
+    padding: 5px 9px; border-radius: 6px; font-size: 12px; line-height: 1.45; white-space: nowrap;
+    font-variant-numeric: tabular-nums; color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary);
+  }
+  .sx-tip b { font-weight: 600; }
+  .sx-tip i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  /* ---- Scenario panel ---- */
+  .sx-scenario { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--entry); border: 1px solid var(--border); box-shadow: inset 3px 0 0 var(--sx-flame); }
+  .sx-scn-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
+  .sx-scn-kicker { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--secondary); }
+  .sx-scn-title { font-size: 16px; }
+  .sx-scn-mod { font-size: 12px; color: var(--secondary); border: 1px dashed var(--tertiary); border-radius: 999px; padding: 1px 8px; }
+  .sx-root .sx-scn-exit { margin-left: auto; font-size: 12px; padding: 2px 10px; }
+  .sx-chain { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 26px; margin: 0; padding: 0; list-style: none; }
+  .sx-chain li { position: relative; margin: 0; }
+  .sx-chain li + li::before { content: "→"; position: absolute; left: -19px; top: 14px; color: var(--secondary); font-size: 15px; }
+  .sx-chain span { display: block; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--secondary); }
+  .sx-root .sx-chain p { margin: 2px 0 0; font-size: 13.5px; line-height: 1.4; }
+  .sx-root .sx-chain li:last-child p { font-weight: 600; }
+  @media (max-width: 760px) {
+    .sx-chain { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+    .sx-chain li + li::before { content: "↓"; left: 0; top: -15px; font-size: 12px; }
+  }
+
+  /* ---- Scenario gallery ---- */
+  .sx-gallery { margin-top: 28px; }
+  .sx-root .sx-gallery-title { margin: 0 0 4px; font-size: 20px; }
+  .sx-root .sx-gallery-sub { margin: 0 0 12px; color: var(--secondary); font-size: 14px; max-width: 70ch; }
+  .sx-gallery-pair { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 0 0 12px; font-size: 13.5px; }
+  .sx-gallery-pair b { font-weight: 700; }
+  .sx-dxs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 860px) { .sx-dxs { grid-template-columns: minmax(0, 1fr); } }
+  .sx-dx { display: flex; flex-direction: column; gap: 8px; padding: 14px; background: var(--entry); border: 1px solid var(--border); border-radius: 12px; }
+  .sx-dx.sx-active { border-color: var(--sx-flame); box-shadow: inset 0 0 0 1px var(--sx-flame); }
+  .sx-dx-kicker, .sx-dx .sx-k { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--secondary); }
+  .sx-root .sx-dx h4 { margin: 0; font-size: 17px; }
+  .sx-root .sx-dx-quote { margin: 0; font-size: 13.5px; font-style: italic; color: var(--secondary); }
+  .sx-dx-graph { margin: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+  .sx-dx-showing { display: block; font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+  .sx-dx-graph svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .sx-dx-result { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 4px 0 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .sx-dx-result .sx-ok { color: var(--sx-good); }
+  .sx-dx-result .sx-no { color: var(--sx-bad); }
+  .sx-dx-result .sx-all { font-weight: 700; }
+  .sx-dx-steps { display: grid; gap: 6px; margin: 0; font-size: 13.5px; line-height: 1.4; }
+  .sx-dx-steps > div > span:last-child { display: block; }
+  .sx-dx-fixes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .sx-dx-fixes .sx-k { width: 100%; }
+  .sx-root .sx-dx-fixes button { font-weight: 600; }
+  .sx-root .sx-dx-fixes button.sx-dx-back { font-weight: 400; color: var(--secondary); }
+  .sx-dx-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 12px; margin-top: auto; padding-top: 4px; }
+  .sx-root .sx-dx-take { margin: 0; font-size: 13.5px; font-weight: 700; flex: 1 1 220px; }
+  .sx-gallery-key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: -4px 0 12px; font-size: 12.5px; color: var(--secondary); }
+  .sx-gallery-key span { display: inline-flex; align-items: center; gap: 5px; }
+  .sx-gallery-key i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+  .sx-gallery-key i.sx-k-band { height: 8px; background: color-mix(in srgb, var(--sx-good) 25%, transparent); }
+  .sx-gallery-key i.sx-k-flip { height: 10px; width: 0; border-left: 1px dotted var(--secondary); border-radius: 0; }
+  .sx-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+
+{{- $modelJS := resources.Get "js/stovetop-model.js" | minify | fingerprint }}
+<script src="{{ $modelJS.RelPermalink }}" integrity="{{ $modelJS.Data.Integrity }}"></script>
+{{- $outcomeJS := resources.Get "js/stovetop-outcome.js" | minify | fingerprint }}
+<script src="{{ $outcomeJS.RelPermalink }}" integrity="{{ $outcomeJS.Data.Integrity }}"></script>
+{{- $knobJS := resources.Get "js/stovetop-knob.js" | minify | fingerprint }}
+<script src="{{ $knobJS.RelPermalink }}" integrity="{{ $knobJS.Data.Integrity }}"></script>
+{{- $sceneJS := resources.Get "js/stovetop-scene.js" | minify | fingerprint }}
+<script src="{{ $sceneJS.RelPermalink }}" integrity="{{ $sceneJS.Data.Integrity }}"></script>
+{{- $simJS := resources.Get "js/stovetop-sim.js" | minify | fingerprint }}
+<script src="{{ $simJS.RelPermalink }}" integrity="{{ $simJS.Data.Integrity }}"></script>
+{{- $presetsJS := resources.Get "js/stovetop-presets.js" | minify | fingerprint }}
+<script src="{{ $presetsJS.RelPermalink }}" integrity="{{ $presetsJS.Data.Integrity }}"></script>
+{{- $timelineJS := resources.Get "js/stovetop-timeline.js" | minify | fingerprint }}
+<script src="{{ $timelineJS.RelPermalink }}" integrity="{{ $timelineJS.Data.Integrity }}"></script>
+
+<div class="sx-root">
+  <div class="sx-takeaway">
+    <div class="sx-rules">
+      <div><b style="--sx-key: var(--sx-surface)">Each side</b><span>temperature × time → browning</span></div>
+      <div><b style="--sx-key: var(--sx-center)">Center</b><span>temperature → doneness</span></div>
+    </div>
+    <p class="sx-punch">Good cooking lines up both targets.</p>
+  </div>
+
+  <!-- While a scenario preset is running: what it changes and what follows from it -->
+  <div class="sx-scenario" hidden>
+    <div class="sx-scn-head">
+      <span class="sx-scn-kicker">Diagnosis</span>
+      <b class="sx-scn-title"></b>
+      <span class="sx-scn-mod" hidden>Preset modified</span>
+      <button type="button" class="sx-scn-exit">✕ Close</button>
+    </div>
+    <ol class="sx-chain">
+      <li><span>Observed</span><p class="sx-c-change"></p></li>
+      <li><span>Model diagnosis</span><p class="sx-c-curve"></p></li>
+      <li><span>What needs to change</span><p class="sx-c-outcome"></p></li>
+      <li><span>Now running</span><p class="sx-c-advice"></p></li>
+    </ol>
+  </div>
+
+  <div class="sx-main">
+    <!-- Controls. Wide screens: a column pinned beside the panels. Narrow screens: the knob on top, then a bar
+         pinned to the top of the screen while any part of the visual is in view. -->
+    <div class="sx-rail">
+      <div class="sx-burner">
+        <svg class="sx-knob" aria-label="Burner power"></svg>
+        <div class="sx-burner-info">
+          <span class="sx-burner-title">Burner</span>
+          <span class="sx-burner-name"></span>
+          <span class="sx-burner-detail"></span>
+        </div>
+      </div>
+      <div class="sx-bar-sentinel"></div>
+      <div class="sx-bar">
+    <div class="sx-transport">
+      <button type="button" class="sx-play">▶ Play</button>
+      <button type="button" class="sx-add">+ Add food</button>
+      <button type="button" class="sx-flip" disabled>⇅ Flip</button>
+      <button type="button" class="sx-remove" disabled>Remove food</button>
+      <button type="button" class="sx-reset">↺ Reset</button>
+      <span class="sx-speed" role="group" aria-label="Simulation speed">
+        <span class="sx-speed-label">Speed</span>
+      </span>
+      <span class="sx-clock"></span>
+      <span class="sx-bar-burner" hidden></span>
+    </div>
+      </div>
+    </div>
+
+    <div class="sx-panel sx-setup">
+      <div class="sx-setup-title">The food <span class="sx-setup-state"></span></div>
+      <div>
+        <div class="sx-field-head"><label for="{{ printf "sx%d" .Ordinal }}-thick">Thickness</label><output class="sx-v-thick"></output></div>
+        <input type="range" id="{{ printf "sx%d" .Ordinal }}-thick" class="sx-thick">
+        <div class="sx-ends"><span>Thin</span><span>Thick</span></div>
+        <p class="sx-lesson">Thicker food makes the center lag farther behind.</p>
+      </div>
+      <div>
+        <div class="sx-field-head"><label for="{{ printf "sx%d" .Ordinal }}-start">Initial food temperature</label><output class="sx-v-start"></output></div>
+        <input type="range" id="{{ printf "sx%d" .Ordinal }}-start" class="sx-start">
+        <div class="sx-ends"><button type="button" data-t="40">Fridge cold: 40°F</button><button type="button" data-t="60">Warmer: 60°F</button></div>
+        <p class="sx-lesson">Warmer food starts closer to its center-temperature target.</p>
+      </div>
+    </div>
+    <div class="sx-side">
+      <div class="sx-panel sx-scene">
+        <svg role="img" aria-label="Cutaway of a pan on a gas burner, with a steak beside it, in it, or resting after removal. The face on the pan is drawn at the bottom."></svg>
+        <div class="sx-readout">
+          <span><i style="background: var(--sx-surface)"></i>Side A <b class="sx-r-a"></b><em class="sx-r-a-pos"></em></span>
+          <span><i style="background: var(--sx-center)"></i>Center <b class="sx-r-c"></b></span>
+          <span><i class="sx-sw-dash"></i>Side B <b class="sx-r-b"></b><em class="sx-r-b-pos"></em></span>
+        </div>
+        <p class="sx-lesson">Flipping changes which surface receives direct pan heat.</p>
+        <p class="sx-hint">The surfaces respond quickly. The center responds slowly.</p>
+      </div>
+      <div class="sx-panel sx-status" aria-live="off">
+        <div class="sx-status-head">
+          <span class="sx-status-title">Cooking outcome</span>
+          <span class="sx-cooktime"></span>
+        </div>
+        <div class="sx-stat" style="--sx-key: var(--sx-surface)">
+          <span class="sx-stat-name"><i></i>Side A</span>
+          <span class="sx-badge sx-b-a"></span>
+          <span class="sx-stat-detail sx-d-a"></span>
+        </div>
+        <div class="sx-stat" style="--sx-key: var(--sx-surface)">
+          <span class="sx-stat-name"><i class="sx-sw-dash"></i>Side B</span>
+          <span class="sx-badge sx-b-b"></span>
+          <span class="sx-stat-detail sx-d-b"></span>
+        </div>
+        <div class="sx-stat" style="--sx-key: var(--sx-center)">
+          <span class="sx-stat-name"><i></i>Food center</span>
+          <span class="sx-badge sx-b-center"></span>
+          <span class="sx-stat-detail sx-d-center"></span>
+        </div>
+        <div class="sx-verdict"></div>
+        <p class="sx-lesson">The center can keep heating after the food leaves the pan.</p>
+        <p class="sx-hint">Try taking the food off a little before the center reaches its target, and watch the center after removal.</p>
+      </div>
+    </div>
+
+    <div class="sx-graphs">
+      <div class="sx-panel sx-graph sx-thermal">
+        <p class="sx-graph-title">One cooking timeline</p>
+        <p class="sx-graph-sub">Top: the physics, temperatures over time. Underneath, on the same time axis: what they mean. The center's doneness follows its temperature (the band on the graph); each side's browning builds up from its whole temperature history, so it gets its own strip instead of a band, painted in crust color: pale, golden, dark brown, black once it's burnt.</p>
+        <ul class="sx-legend">
+          <li><i style="background: var(--sx-pan)"></i>Pan</li>
+          <li><i style="background: var(--sx-surface)"></i>Side A</li>
+          <li><i class="sx-sw-dash"></i>Side B</li>
+          <li><i style="background: var(--sx-center)"></i>Food center</li>
+          <li><i class="sx-swatch-band"></i><span class="sx-band-legend">Target center temperature</span></li>
+        </ul>
+        <svg role="img" aria-label="Pan, Side A, Side B and food center temperatures over time, with the target center temperature band and flip markers. Underneath, on the same time axis, strips show each side's browning state, the center's doneness state, and when all targets were met."></svg>
+        <div class="sx-tip" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <section class="sx-gallery">
+    <h3 class="sx-gallery-title">Diagnosing a bad cook</h3>
+    <p class="sx-gallery-sub">Start from a bad result, read off which curve got ahead of which, and the fix follows. Every graph here is a run of the simulator above; pick a fix to rerun it, with the failed run's center curve left in grey for comparison.</p>
+    <div class="sx-gallery-pair">
+      <span><b>Burnt + raw</b> → the outside is too fast</span>
+      <span><b>Pale + done</b> → the outside is too slow</span>
+    </div>
+    <div class="sx-gallery-key">
+      <span><i style="background: var(--sx-surface)"></i>Side A</span>
+      <span><i class="sx-sw-dash"></i>Side B</span>
+      <span><i style="background: var(--sx-center)"></i>Center</span>
+      <span><i class="sx-k-band"></i>Center target</span>
+      <span><i class="sx-k-flip"></i>Flip</span>
+      <span>Strips: A / B browning (crust color), center doneness, ✓ all targets met</span>
+    </div>
+    <div class="sx-dxs"></div>
+  </section>
+  <p class="sx-sr" aria-live="polite"></p>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const $ = (sel) => root.querySelector(sel);
+    const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+
+    // ==== Simulator: state + actions (assets/js/stovetop-sim.js) ==================
+    const Sim = window.StovetopSim, Presets = window.StovetopPresets;
+    const { MODEL, DT, PRESETS, FOOD_EXTRA, FOOD, burnerWatts, otherSide } = window.StovetopModel;
+    const { THICKNESS, START_TEMP, added, cookingTime, panTime, setThickness, setInitialFoodTemp } = Sim;
+    const SPEEDS = [3, 15, 60];
+
+    // ==== Outcome: interprets temperatures (assets/js/stovetop-outcome.js) =========
+    const OUT = window.StovetopOutcome;
+    const { CENTER_TARGET, BROWNING_LEVEL } = OUT;
+
+    let state = Sim.freshState({ speed: 15 });
+    let pending = 0;
+    // The running scenario, if any: { def, variant, runner, modified, resumeSpeed }
+    let preset = null;
+    function advance(simSeconds) {
+      pending += simSeconds;
+      while (pending >= DT && state.running) {
+        Sim.step(state, DT);
+        if (preset) preset.runner.due(state.time); // scheduled actions fire on simulated time
+        pending -= DT;
+      }
+    }
+    // Back to the defaults: burner, thickness and initial food temperature included
+    function resetSimulation() {
+      state = Sim.freshState({ speed: state.speed });
+      pending = 0;
+    }
+
+    // ==== Rendering ===============================================================
+    const fmtT = (t) => `${Math.round(t)}°F`;
+    const fmtW = (w) => `${Math.round(w).toLocaleString('en-US')} W`;
+    const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+    const presetName = (pct) => (PRESETS.find(([, v]) => v === pct) || [])[0];
+    const NAMES = { pan: 'Pan', sideA: 'Side A', sideB: 'Side B', center: 'Food center' };
+    const COLOR = { pan: 'var(--sx-pan)', sideA: 'var(--sx-surface)', sideB: 'var(--sx-surface)', center: 'var(--sx-center)' };
+    // Side A and Side B share the surface color; Side B is always dashed (lines, swatches, outline)
+    const swatch = (k) => (k === 'sideB' ? '<i class="sx-sw-dash"></i>' : `<i style="background: ${COLOR[k]}"></i>`);
+    const Y_MAX = 600;
+    const X_SPANS = [10, 15, 20, 30, 45, 60, 90, 120]; // minutes; axes widen through these
+    const xSpanFor = (sec) => (X_SPANS.find((m) => m * 60 >= sec) || Math.ceil(sec / 3600) * 60) * 60;
+
+    // -- Schematic
+    const scene = window.StovetopScene($('.sx-scene svg'), {
+      foodStartTemp: FOOD.startTemp,
+      heatArrows: true,
+      sides: true,
+      note: (s) => (s.foodState === 'removed' ? 'resting off the heat' : `${s.thickness} in steak at ${Math.round(s.initialFoodTemp)}°F`),
+    });
+
+    // -- A graph frame: size, scales, gridlines and axes (shared by both graphs)
+    function createFrame(svg, { xTitle, wideRight, size = [0.5, 240, 330], yTicks = null, strips = 0 }) {
+      const f = { W: 0, H: 0, xMax: 0, yMax: Y_MAX, strips, M: { top: 12, right: wideRight, bottom: 40 + strips, left: 50 } };
+      svg.innerHTML = '<g class="sx-under-layer"></g><g class="sx-grid"></g><g class="sx-axis"></g><g class="sx-over-layer"></g>';
+      const gridG = svg.querySelector('.sx-grid'), axisG = svg.querySelector('.sx-axis');
+      f.layer = svg.querySelector('.sx-over-layer');
+      f.under = svg.querySelector('.sx-under-layer');
+      f.plotW = () => f.W - f.M.left - f.M.right;
+      f.plotH = () => f.H - f.M.top - f.M.bottom;
+      f.sx = (t) => f.M.left + (t / f.xMax) * f.plotW();
+      f.sy = (temp) => f.M.top + (1 - temp / f.yMax) * f.plotH();
+      f.narrow = () => f.W < 480;
+      f.bottom = () => f.sy(0) + Math.max(0, strips - 8); // lowest point marker lines reach (through any strips)
+      // Returns true when the frame changed, so callers can redraw anything that depends on it
+      f.layout = (span, yMax = f.yMax) => {
+        const w = svg.clientWidth;
+        if (w === f.W && span === f.xMax && yMax === f.yMax) return false;
+        f.W = w; f.xMax = span; f.yMax = yMax;
+        f.M.right = f.narrow() ? 50 : wideRight;
+        f.H = Math.round(clamp(w * size[0], size[1], size[2])) + strips;
+        svg.setAttribute('viewBox', `0 0 ${f.W} ${f.H}`);
+        svg.style.height = `${f.H}px`;
+        const x0 = f.M.left, x1 = f.W - f.M.right, yBase = f.sy(0);
+        let grid = '', axis = '';
+        const ticks = yTicks || Array.from({ length: Math.floor(f.yMax / (f.yMax <= 300 ? 50 : 100)) + 1 }, (_, i) => {
+          const temp = i * (f.yMax <= 300 ? 50 : 100);
+          return [temp, `${temp}°F`];
+        });
+        for (const [v, label] of ticks) {
+          const y = f.sy(v).toFixed(1);
+          if (v) grid += `<line x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" />`;
+          axis += `<text x="${x0 - 8}" y="${y}" dy="0.32em" text-anchor="end">${label}</text>`;
+        }
+        const spanMin = f.xMax / 60, maxTicks = Math.max(2, Math.floor(f.plotW() / 48));
+        const step = [1, 2, 5, 10, 15, 30, 60, 120].find((s) => spanMin / s <= maxTicks) || 240;
+        for (let m = 0; m <= spanMin + 1e-9; m += step) axis += `<text x="${f.sx(m * 60).toFixed(1)}" y="${yBase + strips + 18}" text-anchor="middle">${m}</text>`;
+        axis += `<line class="sx-baseline" x1="${x0}" x2="${x1}" y1="${yBase}" y2="${yBase}" />`;
+        axis += `<text x="${(x0 + x1) / 2}" y="${f.H - 4}" text-anchor="middle">${xTitle}</text>`;
+        gridG.innerHTML = grid;
+        axisG.innerHTML = axis;
+        return true;
+      };
+      return f;
+    }
+
+    // Path through one series' history samples; toX returns null for samples to skip
+    function seriesPath(s, k, toX, toY, from = '') {
+      const h = s.history;
+      let d = from;
+      for (let i = 0; i < h.time.length; i++) {
+        const v = h[k][i], x = v === null ? null : toX(h.time[i]);
+        if (x !== null) d += `${d ? 'L' : 'M'}${x.toFixed(1)} ${toY(v).toFixed(1)}`;
+      }
+      return d;
+    }
+
+    // Shared hover: a crosshair, dots and a tooltip, filled in by each graph's pick(px)
+    function attachHover(frame, svg, tip, pick) {
+      svg.insertAdjacentHTML('beforeend', '<g class="sx-hover" visibility="hidden"><line /></g>');
+      const g = svg.querySelector('.sx-hover'), line = g.querySelector('line');
+      let px = null;
+      const show = () => {
+        const p = px === null ? null : pick(px);
+        if (!p) { g.setAttribute('visibility', 'hidden'); tip.hidden = true; return; }
+        line.setAttribute('x1', p.x); line.setAttribute('x2', p.x);
+        line.setAttribute('y1', frame.M.top); line.setAttribute('y2', frame.sy(0));
+        g.querySelectorAll('circle').forEach((c) => c.remove());
+        g.insertAdjacentHTML('beforeend', p.dots.map((d) => `<circle r="4" cx="${p.x}" cy="${d.y}" style="stroke: ${d.color}" />`).join(''));
+        g.setAttribute('visibility', 'visible');
+        tip.innerHTML = p.html;
+        tip.hidden = false;
+        const box = svg.getBoundingClientRect(), panel = svg.parentElement.getBoundingClientRect();
+        const half = tip.offsetWidth / 2 + 4;
+        tip.style.left = `${clamp(box.left - panel.left + p.x, half, panel.width - half)}px`;
+        tip.style.top = `${Math.max(box.top - panel.top + p.tipY, tip.offsetHeight + 16)}px`;
+      };
+      const set = (e) => { px = e.clientX - svg.getBoundingClientRect().left; show(); };
+      svg.addEventListener('pointermove', set);
+      svg.addEventListener('pointerdown', set);
+      svg.addEventListener('pointerleave', () => { px = null; show(); });
+      return show;
+    }
+
+    // Sample at simulated time t (from history, or the live state past the last sample)
+    function sampleAt(s, t) {
+      const h = s.history, i = Math.round(t / (s.sampleEvery * DT));
+      if (i < h.time.length) {
+        return { time: h.time[i], pan: h.pan[i], sideA: h.sideA[i], sideB: h.sideB[i], center: h.center[i], brownA: h.brownA[i], brownB: h.brownB[i] };
+      }
+      const on = added(s);
+      return {
+        time: s.time, pan: s.panTemp, sideA: on ? s.sideATemp : null, sideB: on ? s.sideBTemp : null, center: on ? s.centerTemp : null,
+        brownA: on ? s.outcome.browning.A : null, brownB: on ? s.outcome.browning.B : null,
+      };
+    }
+
+    // Dashed event markers; a label moves down a row when it would collide with the previous one
+    function drawMarkers(F, g, marks, labelY = F.M.top + 10) {
+      const x1 = F.W - F.M.right;
+      let prev = null, row = 0;
+      g.innerHTML = marks.map((m) => {
+        row = prev !== null && Math.abs(m.x - prev) < 120 ? row + 1 : 0;
+        prev = m.x;
+        const flip = m.x > x1 - 110;
+        return `<line x1="${m.x}" x2="${m.x}" y1="${F.M.top}" y2="${F.bottom()}" />` +
+          `<text class="sx-label sx-strong" x="${flip ? m.x - 5 : m.x + 5}" y="${labelY + row * 15}" text-anchor="${flip ? 'end' : 'start'}">${m.label}</text>`;
+      }).join('');
+    }
+
+    // Flips: faint dotted lines, with a small label where there's room. toX maps a flip event to x.
+    function drawFlips(F, g, s, toX, until = Infinity, labels = true) {
+      let lastLabel = -Infinity;
+      g.innerHTML = s.flipEvents.filter((e) => e.cookingTime <= until).map((e) => {
+        const x = toX(e), label = labels && x - lastLabel > 30;
+        if (label) lastLabel = x;
+        return `<line x1="${x}" x2="${x}" y1="${F.M.top}" y2="${F.bottom()}" />` +
+          (label ? `<text x="${x}" y="${F.sy(0) - 5}" text-anchor="middle" class="sx-label">flip</text>` : '');
+      }).join('');
+    }
+
+    // -- Thermal graph: pan, Side A, Side B, center + the center's target band
+    const thermalSvg = $('.sx-thermal svg'), thermalTip = $('.sx-thermal .sx-tip');
+    // Outcome strips: Side A browning, Side B browning, center doneness, and a thin "ready" strip
+    const STRIP = { gap: 12, rowH: 16, rowGap: 6, readyH: 8 };
+    const ROWS = [['A', 'Side A'], ['B', 'Side B'], ['center', 'Center']];
+    const STRIPS_H = STRIP.gap + ROWS.length * (STRIP.rowH + STRIP.rowGap) + STRIP.readyH + 10;
+    const TF = createFrame(thermalSvg, { xTitle: 'Elapsed time (simulated minutes)', wideRight: 124, strips: STRIPS_H, size: [0.6, 260, 400] });
+    const T_SERIES = ['center', 'sideB', 'sideA', 'pan']; // drawn bottom-up
+    TF.layer.innerHTML =
+      '<defs class="sx-strip-defs"></defs><g class="sx-strips"></g>' +
+      '<g class="sx-band"><rect class="sx-target-fill" /><line class="sx-target-edge" /><line class="sx-target-edge" /><text class="sx-label sx-good" text-anchor="end" dy="0.32em"></text></g>' +
+      '<g class="sx-flips"></g><g class="sx-markers"></g>' +
+      T_SERIES.map((k) => `<path class="sx-curve sx-c-${k}" style="stroke: ${COLOR[k]}"${k === 'sideB' ? ' stroke-dasharray="6 4"' : ''} />`).join('') +
+      T_SERIES.map((k) => `<circle class="sx-dot sx-d-${k}${k === 'sideB' ? ' sx-dot-hollow' : ''}" r="5" style="fill: ${COLOR[k]}" />`).join('') +
+      '<g class="sx-ends"></g>' +
+      '<line class="sx-playhead" visibility="hidden" />' +
+      '<text class="sx-label sx-strong sx-carry" text-anchor="middle"></text>';
+    const tq = (sel) => thermalSvg.querySelector(sel);
+    $('.sx-band-legend').textContent = `Target center temperature (${CENTER_TARGET.min}–${CENTER_TARGET.max}°F)`;
+
+    // The states over time, as runs of the same state: [{ from, to, state }] per strip.
+    // Browning comes from each side's stored accumulated level (history), never from its current temperature;
+    // doneness from the hottest the center has been so far; "ready" when all three targets are met at once.
+    function stripRuns(s) {
+      const runs = { A: [], B: [], center: [], ready: [] };
+      if (!added(s)) return runs;
+      const h = s.history;
+      let centerMax = -Infinity;
+      const push = (k, t, state) => {
+        const r = runs[k], last = r[r.length - 1];
+        if (last) last.to = t;
+        if (!last || last.state !== state) r.push({ from: t, to: t, state });
+      };
+      const visit = (t, levelA, levelB, center) => {
+        centerMax = Math.max(centerMax, center);
+        const o = { sideA: OUT.getBrowningLevelStatus(levelA), sideB: OUT.getBrowningLevelStatus(levelB), center: OUT.getCenterStatus(centerMax) };
+        push('A', t, o.sideA); push('B', t, o.sideB); push('center', t, o.center);
+        push('ready', t, OUT.sidedTargetsMet(o) ? 'ready' : 'none');
+      };
+      visit(s.foodAddedAt, 0, 0, s.foodStart.center);
+      for (let i = 0; i < h.time.length; i++) if (h.time[i] > s.foodAddedAt && h.brownA[i] !== null) visit(h.time[i], h.brownA[i], h.brownB[i], h.center[i]);
+      visit(s.time, s.outcome.browning.A, s.outcome.browning.B, s.centerTemp);
+      return runs;
+    }
+    const STATE_TEXT = { under: 'under-browned', good: 'good', burnt: 'burnt', underdone: 'underdone', target: 'target', overdone: 'overdone' };
+    const UID = '{{ printf "sx%d" .Ordinal }}';
+
+    // A side's browning strip is painted in crust color: a gradient through its stored browning level over time
+    // (pale → golden → dark brown → black), with stops about every 3 px
+    function browningGradient(s, side, id) {
+      const h = s.history, key = `brown${side}`, x0 = TF.sx(s.foodAddedAt), x1 = TF.sx(s.time), span = Math.max(1, x1 - x0);
+      const pts = [[s.foodAddedAt, 0]];
+      for (let i = 0; i < h.time.length; i++) if (h.time[i] > s.foodAddedAt && h[key][i] !== null) pts.push([h.time[i], h[key][i]]);
+      pts.push([s.time, s.outcome.browning[side]]);
+      let stops = '', lastX = -Infinity;
+      pts.forEach(([t, level], i) => {
+        const x = TF.sx(t);
+        if (x - lastX < 3 && i < pts.length - 1) return;
+        lastX = x;
+        stops += `<stop offset="${((x - x0) / span).toFixed(4)}" stop-color="${OUT.browningColor(level)}" />`;
+      });
+      return `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x0.toFixed(1)}" x2="${x1.toFixed(1)}" y1="0" y2="0">${stops}</linearGradient>`;
+    }
+
+    function renderStrips(s) {
+      const x0 = TF.M.left, x1 = TF.W - TF.M.right, top = TF.sy(0) + STRIP.gap, runs = stripRuns(s);
+      const rowY = (i) => top + i * (STRIP.rowH + STRIP.rowGap);
+      let out = '', defs = '';
+      ROWS.forEach(([key, label], i) => {
+        const y = rowY(i), browning = key !== 'center', mid = y + STRIP.rowH / 2;
+        out += `<rect class="sx-strip-track" x="${x0}" y="${y}" width="${x1 - x0}" height="${STRIP.rowH}" rx="3" />`;
+        out += `<text class="sx-strip-row" x="${x0 - 8}" y="${mid}" dy="0.35em" text-anchor="end">${label}</text>`;
+        if (browning && runs[key].length) {
+          // crust color over time, with a tick where the state changes
+          const id = `${UID}-brown-${key}`, a = TF.sx(s.foodAddedAt);
+          defs += browningGradient(s, key, id);
+          out += `<rect x="${a.toFixed(1)}" y="${y}" width="${Math.max(1, TF.sx(s.time) - a).toFixed(1)}" height="${STRIP.rowH}" fill="url(#${id})" />`;
+        }
+        runs[key].forEach((r, k) => {
+          const a = TF.sx(r.from), w = Math.max(1, TF.sx(r.to) - a), text = STATE_TEXT[r.state];
+          if (!browning) out += `<rect class="sx-seg-${r.state}" x="${a.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${STRIP.rowH}" />`;
+          else if (k > 0) out += `<line class="sx-seg-tick" x1="${a.toFixed(1)}" x2="${a.toFixed(1)}" y1="${y}" y2="${y + STRIP.rowH}" />`;
+          const ink = browning ? (r.state === 'burnt' ? '#fff' : '#2b1d12') : '';
+          if (w > text.length * 6 + 10) out += `<text class="sx-strip-text" x="${(a + 5).toFixed(1)}" y="${mid}" dy="0.35em"${ink ? ` style="fill: ${ink}"` : ''}>${text}</text>`;
+        });
+        // live status at the right end (with the crust's current color for the sides)
+        const now = runs[key][runs[key].length - 1];
+        if (now && !TF.narrow()) {
+          const swatch = browning ? `<rect x="${x1 + 8}" y="${mid - 5}" width="10" height="10" rx="2" fill="${OUT.browningColor(s.outcome.browning[key])}" stroke="var(--border)" />` : '';
+          out += swatch + `<text class="sx-strip-now sx-k-${KIND[now.state]}" x="${x1 + (browning ? 22 : 8)}" y="${mid}" dy="0.35em">${STATE_TEXT[now.state]}</text>`;
+        }
+      });
+      tq('.sx-strip-defs').innerHTML = defs;
+      const yReady = rowY(ROWS.length);
+      out += `<text class="sx-strip-row" x="${x0 - 8}" y="${yReady + STRIP.readyH / 2}" dy="0.35em" text-anchor="end">Ready</text>`;
+      out += `<rect class="sx-strip-track" x="${x0}" y="${yReady}" width="${x1 - x0}" height="${STRIP.readyH}" rx="2" />`;
+      for (const r of runs.ready) if (r.state === 'ready') out += `<rect class="sx-seg-ready" x="${TF.sx(r.from).toFixed(1)}" y="${yReady}" width="${Math.max(2, TF.sx(r.to) - TF.sx(r.from)).toFixed(1)}" height="${STRIP.readyH}" rx="2" />`;
+      const readyNow = runs.ready.length && runs.ready[runs.ready.length - 1].state === 'ready';
+      if (readyNow && !TF.narrow()) out += `<text class="sx-strip-now sx-k-good" x="${x1 + 8}" y="${yReady + STRIP.readyH / 2}" dy="0.35em">aligned</text>`;
+      tq('.sx-strips').innerHTML = out;
+    }
+
+    function renderThermalGraph(s) {
+      TF.layout(xSpanFor(s.time));
+      const x0 = TF.M.left, x1 = TF.W - TF.M.right, yBase = TF.sy(0);
+
+      // Center target band
+      const yTop = TF.sy(CENTER_TARGET.max), yBot = TF.sy(CENTER_TARGET.min);
+      const band = tq('.sx-band rect');
+      band.setAttribute('x', x0); band.setAttribute('width', x1 - x0);
+      band.setAttribute('y', yTop); band.setAttribute('height', yBot - yTop);
+      const [e1, e2] = thermalSvg.querySelectorAll('.sx-band line');
+      for (const [el, y] of [[e1, yTop], [e2, yBot]]) { el.setAttribute('x1', x0); el.setAttribute('x2', x1); el.setAttribute('y1', y); el.setAttribute('y2', y); }
+      const bandText = tq('.sx-band text');
+      bandText.setAttribute('x', x0 - 8); bandText.setAttribute('y', (yTop + yBot) / 2);
+      bandText.textContent = 'target';
+      // Only when it clears the nearest tick label (the legend names the band either way)
+      bandText.style.display = Math.abs((yTop + yBot) / 2 - TF.sy(Math.round(CENTER_TARGET.min / 100) * 100)) < 16 ? 'none' : '';
+
+
+      // Food added / removed markers, and flips
+      const marks = [];
+      if (added(s)) marks.push({ x: TF.sx(s.foodAddedAt), label: 'Food added' });
+      if (s.foodRemovedAt !== null) marks.push({ x: TF.sx(s.foodRemovedAt), label: 'Food removed' });
+      drawMarkers(TF, tq('.sx-markers'), marks);
+      drawFlips(TF, tq('.sx-flips'), s, (e) => TF.sx(e.time));
+
+      // Curves
+      const now = { pan: s.panTemp, sideA: s.sideATemp, sideB: s.sideBTemp, center: s.centerTemp }, cx = TF.sx(s.time), ends = [];
+      for (const k of T_SERIES) {
+        const visible = k === 'pan' || added(s);
+        let d = '';
+        if (visible) {
+          const start = k === 'pan' ? '' : `M${TF.sx(s.foodAddedAt).toFixed(1)} ${TF.sy(s.foodStart[k]).toFixed(1)}`;
+          d = seriesPath(s, k, (t) => (k === 'pan' || t > s.foodAddedAt ? TF.sx(t) : null), TF.sy, start);
+          d += `${d ? 'L' : 'M'}${cx.toFixed(1)} ${TF.sy(now[k]).toFixed(1)}`;
+          ends.push({ k, y: TF.sy(now[k]) });
+        }
+        tq(`.sx-c-${k}`).setAttribute('d', d);
+        const dot = tq(`.sx-d-${k}`);
+        dot.setAttribute('visibility', visible ? 'visible' : 'hidden');
+        dot.setAttribute('cx', cx); dot.setAttribute('cy', TF.sy(now[k]));
+      }
+      ends.sort((a, b) => a.y - b.y);
+      for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 15);
+      const over = ends.length ? ends[ends.length - 1].y - (yBase - 4) : 0;
+      if (over > 0) ends.forEach((e) => (e.y -= over));
+      tq('.sx-ends').innerHTML = ends.map((e) =>
+        `<text class="sx-label sx-strong" x="${(cx + 9).toFixed(1)}" y="${e.y.toFixed(1)}" dy="0.32em">${TF.narrow() ? '' : `${NAMES[e.k]} `}${fmtT(now[e.k])}</text>`).join('');
+
+      // Carryover: how far the center rose after the food came off, labelled at its peak
+      const o = s.outcome, carry = tq('.sx-carry'), rise = o.removedAt !== null ? o.centerMax - o.centerAtRemoval : 0;
+      carry.style.display = rise >= 1 ? '' : 'none';
+      if (rise >= 1) {
+        carry.setAttribute('x', TF.sx(s.foodAddedAt + o.centerMaxAt));
+        carry.setAttribute('y', TF.sy(o.centerMax) - 12);
+        carry.textContent = `carryover +${Math.round(rise)}°F`;
+      }
+
+      renderStrips(s);
+      const playhead = tq('.sx-playhead');
+      playhead.setAttribute('visibility', s.time > 0 ? 'visible' : 'hidden');
+      playhead.setAttribute('x1', cx); playhead.setAttribute('x2', cx);
+      playhead.setAttribute('y1', TF.M.top); playhead.setAttribute('y2', TF.bottom());
+      thermalHover();
+    }
+    const thermalHover = attachHover(TF, thermalSvg, thermalTip, (px) => {
+      const s = state;
+      if (s.time === 0 || px < TF.M.left || px > TF.W - TF.M.right) return null;
+      const p = sampleAt(s, clamp(((px - TF.M.left) / TF.plotW()) * TF.xMax, 0, s.time));
+      const keys = ['pan', 'sideA', 'center', 'sideB'];
+      let states = '';
+      if (p.brownA !== null && p.brownA !== undefined) {
+        const centerMax = Math.max(...s.history.center.filter((v, i) => v !== null && s.history.time[i] <= p.time), p.center);
+        states = `<br><b>Side A</b> ${STATE_TEXT[OUT.getBrowningLevelStatus(p.brownA)]} · <b>Side B</b> ${STATE_TEXT[OUT.getBrowningLevelStatus(p.brownB)]} · <b>Center</b> ${STATE_TEXT[OUT.getCenterStatus(centerMax)]}`;
+      }
+      return {
+        x: TF.sx(p.time), tipY: TF.sy(p.pan),
+        dots: keys.filter((k) => p[k] !== null).map((k) => ({ y: TF.sy(p[k]), color: COLOR[k] })),
+        html: `<b>${fmtClock(p.time)} elapsed</b><br>` + keys.map((k) =>
+          `${swatch(k)}${NAMES[k]}: ${p[k] === null ? 'not in pan' : fmtT(p[k])}`).join('<br>') + states,
+      };
+    });
+
+    // -- Status
+    const ICONS = {
+      good: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6" /><path d="M4.8 8.3 L7 10.4 L11.2 5.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>',
+      bad: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6" /><path d="M5.5 5.5 L10.5 10.5 M10.5 5.5 L5.5 10.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>',
+      wait: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.5 2" /></svg>',
+      none: '<svg viewBox="0 0 16 16"><path d="M4 8 H12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>',
+    };
+    const KIND = { under: 'wait', good: 'good', burnt: 'bad', underdone: 'wait', target: 'good', overdone: 'bad' };
+    const badge = (el, kind, text) => { el.dataset.state = kind; el.innerHTML = `${ICONS[kind]}${text}`; };
+    const bSide = { A: $('.sx-b-a'), B: $('.sx-b-b') }, dSide = { A: $('.sx-d-a'), B: $('.sx-d-b') };
+    const bCenter = $('.sx-b-center'), dCenter = $('.sx-d-center');
+    const verdict = $('.sx-verdict'), cooktime = $('.sx-cooktime');
+    const windowText = (w) => `${fmtClock(w.from)} to ${fmtClock(w.to)}`;
+    const sideTemp = (s, side) => (side === 'A' ? s.sideATemp : s.sideBTemp);
+    // Where each face is right now: on the pan, facing up, or off the heat
+    const facing = (s, side) => (s.foodState === 'inPan' ? (side === s.panContactSide ? 'on the pan' : 'facing up') : s.foodState === 'removed' ? 'off the heat' : 'waiting');
+
+    // One sentence on where things stand, for when the targets aren't (yet) aligned
+    function describe(o) {
+      const side = (x) => ({ under: `Side ${x} hasn't browned`, good: `Side ${x} is browned`, burnt: `Side ${x} burnt` }[o[`side${x}`]]);
+      const center = { underdone: 'the center is below target', target: 'the center is on target', overdone: 'the center is past its target' }[o.center];
+      return `${side('A')}, ${side('B')}, and ${center}.`;
+    }
+
+    function renderStatus(s) {
+      const o = s.outcome, cook = cookingTime(s), removed = s.foodState === 'removed';
+      cooktime.textContent = !added(s) ? 'Food not in the pan yet'
+        : removed ? `Off the heat · ${fmtClock(panTime(s))} in the pan` : `Cooking time ${fmtClock(cook)}`;
+      if (!added(s)) {
+        for (const side of ['A', 'B']) { badge(bSide[side], 'none', '—'); dSide[side].textContent = fmtT(sideTemp(s, side)); }
+        badge(bCenter, 'none', '—');
+        dCenter.textContent = fmtT(s.centerTemp);
+        verdict.className = 'sx-verdict';
+        verdict.innerHTML = '<b>Not cooking yet</b>Add the food to start the cooking clock.';
+        return;
+      }
+      for (const side of ['A', 'B']) {
+        const status = o[`side${side}`];
+        badge(bSide[side], KIND[status], OUT.LABELS.surface[status]);
+        dSide[side].textContent = status === 'burnt' ? `burnt at ${fmtClock(o.burntAt[side])}` : `${fmtT(sideTemp(s, side))} · ${facing(s, side)}`;
+      }
+      badge(bCenter, KIND[o.center], OUT.LABELS.center[o.center]);
+      dCenter.textContent = removed ? `${fmtT(s.centerTemp)} · peak ${fmtT(o.centerMax)}` : `${fmtT(s.centerTemp)} · target ${CENTER_TARGET.min}–${CENTER_TARGET.max}°F`;
+
+      let title, body;
+      const ever = o.windows.length > 0, last = o.windows[o.windows.length - 1];
+      const rise = removed ? o.centerMax - o.centerAtRemoval : 0;
+      const carry = rise >= 1 ? ` Carryover added ${Math.round(rise)}°F after removal.` : '';
+      const missed = o.sideA === 'burnt' || o.sideB === 'burnt' || o.center === 'overdone';
+      if (removed && o.settledAt === null) {
+        title = o.aligned ? 'Targets aligned' : 'Resting: carryover cooking';
+        body = `The center was ${fmtT(o.centerAtRemoval)} when the food came off and is ${fmtT(s.centerTemp)} now, still rising.`;
+      } else if (removed) {
+        title = o.aligned ? 'Targets aligned' : 'Targets missed';
+        body = o.aligned
+          ? `Final result: both sides browned in the pan, and the center peaked at ${fmtT(o.centerMax)}.${carry}`
+          : `Final result: ${describe(o)}${carry}`;
+      }
+      else if (o.aligned) { title = 'Targets aligned'; body = 'Both sides are browned and the center is on target at the same time.'; }
+      else if (ever) { title = 'Targets were aligned'; body = `From ${windowText(last)} of cooking. Now: ${describe(o)}`; }
+      else { title = missed ? 'Targets missed' : 'Not aligned yet'; body = describe(o); }
+      verdict.className = `sx-verdict${o.aligned ? ' sx-aligned' : ''}`;
+      verdict.innerHTML = `<b>${o.aligned ? ICONS.good : ''}${title}</b>${body}`;
+    }
+
+    // Live readout under the schematic
+    function renderReadout(s) {
+      for (const side of ['A', 'B']) {
+        $(`.sx-r-${side.toLowerCase()}`).textContent = fmtT(sideTemp(s, side));
+        $(`.sx-r-${side.toLowerCase()}-pos`).textContent = s.foodState === 'inPan' ? (side === s.panContactSide ? ' · on pan' : ' · up') : '';
+      }
+      $('.sx-r-c').textContent = fmtT(s.centerTemp);
+    }
+
+    // -- Controls display
+    const burnerName = $('.sx-burner-name'), burnerDetail = $('.sx-burner-detail');
+    const playBtn = $('.sx-play'), addBtn = $('.sx-add'), flipBtn = $('.sx-flip'), removeBtn = $('.sx-remove'), clock = $('.sx-clock');
+    const bar = $('.sx-bar'), barBurner = $('.sx-bar-burner');
+    // "Stuck" once the line just above the bar has scrolled off the top of the screen
+    new IntersectionObserver(([e]) => {
+      const stuck = !e.isIntersecting && e.boundingClientRect.top < 0;
+      bar.classList.toggle('sx-stuck', stuck);
+      barBurner.hidden = !stuck;
+    }).observe($('.sx-bar-sentinel'));
+    const thickInput = $('.sx-thick'), startInput = $('.sx-start'), setupState = $('.sx-setup-state');
+    Object.assign(thickInput, { min: THICKNESS.min, max: THICKNESS.max, step: THICKNESS.step });
+    Object.assign(startInput, { min: START_TEMP.min, max: START_TEMP.max, step: START_TEMP.step });
+    function renderControls(s) {
+      knob.render(s.burner);
+      burnerName.textContent = presetName(s.burner) || `${s.burner}%`;
+      burnerDetail.textContent = `${s.burner}% · ${fmtW(burnerWatts(s.burner))} heat input`;
+      root.querySelectorAll('.sx-speed button').forEach((b) => b.setAttribute('aria-pressed', +b.dataset.v === s.speed));
+      playBtn.textContent = s.running ? '❚❚ Pause' : '▶ Play';
+      playBtn.setAttribute('aria-label', s.running ? 'Pause' : 'Play');
+      addBtn.disabled = added(s);
+      addBtn.textContent = added(s) ? `Food added at ${fmtClock(s.foodAddedAt)}` : '+ Add food';
+      flipBtn.disabled = s.foodState !== 'inPan';
+      flipBtn.textContent = s.flipEvents.length ? `⇅ Flip (${s.flipEvents.length})` : '⇅ Flip';
+      removeBtn.disabled = s.foodState !== 'inPan';
+      removeBtn.textContent = s.foodState === 'removed' ? `Removed at ${fmtClock(s.foodRemovedAt)}` : 'Remove food';
+      // The food's properties are fixed once it's in the pan
+      thickInput.value = s.thickness; startInput.value = s.initialFoodTemp;
+      thickInput.disabled = startInput.disabled = added(s);
+      root.querySelectorAll('.sx-setup .sx-ends button').forEach((b) => {
+        b.disabled = added(s);
+        b.setAttribute('aria-pressed', +b.dataset.t === s.initialFoodTemp);
+      });
+      $('.sx-v-thick').textContent = `${s.thickness} in`;
+      $('.sx-v-start').textContent = fmtT(s.initialFoodTemp);
+      setupState.textContent = added(s) ? 'set before cooking · reset to change' : 'set before adding';
+      clock.textContent = `Elapsed: ${fmtClock(s.time)}`;
+      barBurner.innerHTML = `Burner: <b>${presetName(s.burner) || `${s.burner}%`}</b>${presetName(s.burner) ? ` · ${s.burner}%` : ''}`;
+    }
+
+    function render() {
+      scene.render(state);
+      renderReadout(state);
+      renderStatus(state);
+      renderThermalGraph(state);
+      renderControls(state);
+    }
+
+    // ==== Controls: user input → state, plus the animation loop ===================
+    const live = $('.sx-sr');
+    let announceTimer, lastAnnounced = '';
+    const announce = (msg) => { clearTimeout(announceTimer); announceTimer = setTimeout(() => (live.textContent = msg), 400); };
+
+    const speedGroup = $('.sx-speed');
+    for (const v of SPEEDS) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = `${v}×`; b.dataset.v = v;
+      speedGroup.appendChild(b);
+    }
+    speedGroup.addEventListener('click', (e) => {
+      if (!e.target.dataset.v) return;
+      state.speed = +e.target.dataset.v;
+      if (preset) preset.resumeSpeed = state.speed; // a scenario's fast preheat won't override the reader's choice
+      render();
+    });
+
+    // One path for every action, whether a reader or a scenario preset takes it:
+    // the simulator does it (stovetop-sim.js via Presets.perform), then the schematic animates it
+    function act(action) {
+      if (!Presets.perform(state, action)) return false;
+      if (action.type === 'addFood') scene.carryIn();
+      if (action.type === 'flip') scene.flip();
+      if (action.type === 'removeFood') scene.carryOut();
+      return true;
+    }
+    // A reader stepping in during a scenario: drop its remaining scripted actions, but keep the run going
+    function readerTookOver({ cancel = true } = {}) {
+      if (!preset) return;
+      if (cancel) preset.runner.cancel();
+      preset.modified = true;
+      renderScenario();
+    }
+
+    // Changing the burner changes heat input only; every temperature carries on from where it is
+    function setBurner(pct) {
+      act({ type: 'setBurner', value: pct });
+      readerTookOver();
+      render();
+      announce(`Burner ${state.burner}%.`);
+    }
+    const knob = window.StovetopKnob($('.sx-knob'), { presets: PRESETS, onChange: setBurner });
+
+    let lastFrame = null, visible = true;
+    function frame(now) {
+      lastFrame = null;
+      if (!state.running || !visible) return;
+      if (frame.prev !== undefined) advance(Math.min((now - frame.prev) / 1000, 0.1) * state.speed);
+      frame.prev = now;
+      render();
+      // Announce status changes for screen readers
+      const o = state.outcome, msg = added(state) ? `Side A ${OUT.LABELS.surface[o.sideA]}, side B ${OUT.LABELS.surface[o.sideB]}, center ${OUT.LABELS.center[o.center]}${o.aligned ? ', targets aligned' : ''}.` : '';
+      if (msg !== lastAnnounced) { lastAnnounced = msg; if (msg) announce(msg); }
+      lastFrame = requestAnimationFrame(frame);
+    }
+    function startLoop() {
+      if (lastFrame !== null || !state.running || !visible) return;
+      frame.prev = undefined;
+      lastFrame = requestAnimationFrame(frame);
+    }
+
+    playBtn.addEventListener('click', () => {
+      state.running = !state.running;
+      render();
+      startLoop();
+      announce(state.running ? 'Playing' : 'Paused');
+    });
+    addBtn.addEventListener('click', () => {
+      if (!act({ type: 'addFood' })) return;
+      readerTookOver();
+      render();
+      announce(`Food added at ${fmtClock(state.foodAddedAt)}.`);
+    });
+    removeBtn.addEventListener('click', () => {
+      if (!act({ type: 'removeFood' })) return;
+      readerTookOver();
+      render();
+      announce(`Food removed at ${fmtClock(state.foodRemovedAt)}. Browning stops as the sides cool; the center may keep rising.`);
+    });
+    flipBtn.addEventListener('click', () => {
+      if (!act({ type: 'flip' })) return;
+      readerTookOver();
+      render();
+      announce(`Flipped: Side ${state.panContactSide} is now on the pan.`);
+    });
+    // (changing the food's own settings before it goes in modifies a scenario but doesn't cancel its actions)
+    thickInput.addEventListener('input', () => { if (setThickness(state, +thickInput.value)) readerTookOver({ cancel: false }); render(); });
+    startInput.addEventListener('input', () => { if (setInitialFoodTemp(state, +startInput.value)) readerTookOver({ cancel: false }); render(); });
+    root.querySelectorAll('.sx-setup .sx-ends button').forEach((b) =>
+      b.addEventListener('click', () => { if (setInitialFoodTemp(state, +b.dataset.t)) readerTookOver({ cancel: false }); render(); }));
+    $('.sx-reset').addEventListener('click', () => {
+      scene.cancel();
+      clearPreset();
+      resetSimulation();
+      lastAnnounced = '';
+      render();
+      announce('Reset: pan at room temperature, food back out of the pan');
+    });
+
+    // ==== Diagnoses (assets/js/stovetop-presets.js) ==================================
+    // A run in the simulator above: { def: diagnosis, variant: { label, run }, fix: bool, runner, modified, resumeSpeed }
+    const scenarioPanel = $('.sx-scenario'), dxs = $('.sx-dxs');
+
+    function renderScenario() {
+      scenarioPanel.hidden = !preset;
+      root.querySelectorAll('.sx-dx').forEach((c) => c.classList.toggle('sx-active', !!preset && c.dataset.id === preset.def.id));
+      if (!preset) return;
+      const d = preset.def;
+      $('.sx-scn-title').textContent = `${d.title}: ${preset.fix ? `fix, ${preset.variant.label.toLowerCase()}` : 'the failed cook'}`;
+      $('.sx-scn-mod').hidden = !preset.modified;
+      $('.sx-c-change').textContent = d.problem;
+      $('.sx-c-curve').textContent = d.diagnosis;
+      $('.sx-c-outcome').textContent = d.change;
+      $('.sx-c-advice').textContent = preset.fix ? `Fix: ${preset.variant.label}` : `The failed cook (${preset.variant.label.toLowerCase()})`;
+    }
+    function clearPreset() {
+      if (preset) preset.runner.cancel();
+      preset = null;
+      renderScenario();
+    }
+    $('.sx-scn-exit').addEventListener('click', clearPreset);
+
+    // Reset, apply the run's starting settings, and play. Its actions then fire on simulated time.
+    // The 5-minute preheat plays at 60×, then the reader's chosen speed takes over when the food goes in.
+    function runPreset(def, variant, fix) {
+      if (preset) preset.runner.cancel();
+      scene.cancel();
+      resetSimulation();
+      Presets.applyInitial(state, variant.run.initial);
+      const run = { def, variant, fix, modified: false, resumeSpeed: state.speed };
+      run.runner = Presets.createRunner(variant.run.actions, (a) => {
+        act(a);
+        if (a.type === 'addFood') state.speed = run.resumeSpeed;
+      });
+      preset = run;
+      state.speed = 60;
+      run.runner.due(0);
+      state.running = true;
+      lastAnnounced = '';
+      renderScenario();
+      render();
+      startLoop();
+      root.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+      announce(`Running ${def.title}: ${fix ? `fix, ${variant.label}` : 'the failed cook'}.`);
+    }
+
+    // Each card: the failed cook drawn by the real simulator, then any fix the reader picks, rerun the same way
+    const T = window.StovetopTimeline;
+    dxs.innerHTML = Presets.DIAGNOSES.map((d) => `
+      <article class="sx-dx" data-id="${d.id}">
+        <span class="sx-dx-kicker">Observed problem</span>
+        <h4>${d.title}</h4>
+        <p class="sx-dx-quote">${d.problem}</p>
+        <figure class="sx-dx-graph"><span class="sx-dx-showing"></span><svg role="img"></svg><p class="sx-dx-result"></p></figure>
+        <div class="sx-dx-steps">
+          <div><span class="sx-k">What happened</span><span>${d.happened}</span></div>
+          <div><span class="sx-k">Model diagnosis</span><span>${d.diagnosis}</span></div>
+          <div><span class="sx-k">What needs to change</span><span>${d.change}</span></div>
+        </div>
+        <div class="sx-dx-fixes" role="group" aria-label="Try a fix">
+          <span class="sx-k">Try a fix</span>
+          ${d.fixes.map((f, i) => `<button type="button" data-fix="${i}" aria-pressed="false">${f.label}</button>`).join('')}
+          <button type="button" class="sx-dx-back" data-fix="-1" hidden>↺ Back to the failure</button>
+        </div>
+        <div class="sx-dx-foot">
+          <p class="sx-dx-take">${d.takeaway}</p>
+          <button type="button" class="sx-dx-watch">▶ Watch it in the simulator</button>
+        </div>
+      </article>`).join('');
+
+    root.querySelectorAll('.sx-dx').forEach((card) => {
+      const d = Presets.DIAGNOSES.find((x) => x.id === card.dataset.id);
+      const failed = Presets.simulate(d.failure.run), failedCenter = T.series(failed, 'center', failed.centerTemp);
+      const fixed = d.fixes.map((f) => Presets.simulate(f.run));
+      let shown = -1; // −1: the failure; otherwise the fix index
+      function show(i) {
+        shown = i;
+        const s = i < 0 ? failed : fixed[i], v = i < 0 ? d.failure : d.fixes[i];
+        T.draw(card.querySelector('svg'), s, { id: `${UID}-dx-${d.id}`, width: 380, ghostCenter: i < 0 ? null : failedCenter });
+        card.querySelector('.sx-dx-showing').textContent = i < 0 ? `As cooked: ${v.label.toLowerCase()}` : `With the fix: ${v.label.toLowerCase()}`;
+        const r = T.verdict(s);
+        card.querySelector('.sx-dx-result').innerHTML = r.parts.map((p) => `<span class="${p.good ? 'sx-ok' : 'sx-no'}">${p.text}</span>`).join('') +
+          `<span class="sx-all ${r.ok ? 'sx-ok' : 'sx-no'}">${r.ok ? '✓ All three targets met' : '✗ Not all targets met'}</span>`;
+        card.querySelector('svg').setAttribute('aria-label', `${d.title}, ${i < 0 ? 'the failed cook' : `fix: ${v.label}`}. ${r.parts.map((p) => p.text.slice(2)).join('. ')}.`);
+        card.querySelectorAll('[data-fix]').forEach((b) => b.setAttribute('aria-pressed', +b.dataset.fix === i));
+        card.querySelector('.sx-dx-back').hidden = i < 0;
+      }
+      show(-1);
+      card.addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        if (b.dataset.fix !== undefined) show(+b.dataset.fix);
+        else if (b.classList.contains('sx-dx-watch')) runPreset(d, shown < 0 ? d.failure : d.fixes[shown], shown >= 0);
+      });
+    });
+
+    // Pause the loop (not the simulation state) while the widget is scrolled out of view
+    new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; startLoop(); }).observe(root);
+    new ResizeObserver(() => { TF.W = 0; renderThermalGraph(state); }).observe($('.sx-graphs'));
+
+    render();
+  })();
+</script>

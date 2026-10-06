@@ -1,0 +1,271 @@
+{{- /*
+  "Find a cooking strategy": cooking as a small constraint problem. The reader sets the problem (thickness, starting
+  temperature, doneness target) and the controls (preheat burner, cooking burner, flip interval, removal time); every
+  change reruns the same simulator as the rest of the post and shows the plan, the result and the timeline. "Find a
+  valid strategy" searches burner and flip settings, checks every removal time (with the carryover that follows),
+  and picks a plan where both sides are browned and the center lands on target at serving time.
+  Uses assets/js: stovetop-model, -outcome, -sim, -presets (runs), -timeline (drawing).
+  Usage in a post: {{< stovetop-strategy >}}
+*/ -}}
+<style>
+  .sg-root {
+    --sg-surface: #4a3aa7; --sg-center: #1baf7a; --sg-good: #2f8f5b; --sg-bad: #c2410c; --sg-accent: #2a78d6;
+    --stl-surface: var(--sg-surface); --stl-center: var(--sg-center); --stl-good: var(--sg-good); --stl-bad: var(--sg-bad);
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+    font-size: 14px; line-height: 1.4; color: var(--primary);
+  }
+  :root[data-theme="dark"] .sg-root { --sg-surface: #9085e9; --sg-center: #199e70; --sg-good: #4cc38a; --sg-bad: #f07a4a; --sg-accent: #3987e5; }
+  .sg-root * { box-sizing: border-box; }
+  .sg-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 26px; margin: 0 0 14px; padding: 0; list-style: none; }
+  .sg-flow li { position: relative; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--entry); font-size: 13px; }
+  .sg-flow li + li::before { content: "→"; position: absolute; left: -19px; top: 50%; transform: translateY(-50%); color: var(--secondary); }
+  .sg-flow b { display: block; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--secondary); }
+  @media (max-width: 700px) { .sg-flow { grid-template-columns: minmax(0, 1fr); } .sg-flow li + li::before { content: "↓"; left: 50%; top: -15px; transform: none; } }
+
+  .sg-main { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: 14px; align-items: start; }
+  @media (max-width: 860px) { .sg-main { grid-template-columns: minmax(0, 1fr); } }
+  .sg-panel { min-width: 0; padding: 14px; background: var(--entry); border: 1px solid var(--border); border-radius: 12px; }
+  .sg-panel + .sg-panel { margin-top: 14px; }
+  .sg-root .sg-h { margin: 0 0 8px; font-weight: 700; }
+  .sg-field { margin: 0 0 10px; }
+  .sg-field-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .sg-field-head label { font-size: 13px; color: var(--secondary); }
+  .sg-field-head output { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .sg-root input[type="range"] { display: block; width: 100%; margin: 3px 0 0; accent-color: var(--sg-accent); cursor: pointer; }
+  .sg-seg { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .sg-root button {
+    font: inherit; font-size: 13px; line-height: 1.2; padding: 5px 12px; cursor: pointer; white-space: nowrap;
+    color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary); border-radius: 999px;
+  }
+  .sg-root button:focus-visible { outline: 2px solid var(--sg-accent); outline-offset: 2px; }
+  .sg-root button[aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); font-weight: 600; }
+  .sg-root .sg-find { width: 100%; padding: 8px 12px; font-weight: 700; color: var(--theme); background: var(--primary); border-color: var(--primary); }
+  .sg-root .sg-find:disabled { opacity: .6; cursor: progress; }
+  .sg-root .sg-search-note { margin: 6px 0 0; font-size: 12.5px; color: var(--secondary); min-height: 1.4em; }
+
+  .sg-verdict { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 10px; }
+  .sg-verdict.sg-ok { border-color: var(--sg-good); box-shadow: inset 0 0 0 1px var(--sg-good); }
+  .sg-verdict b { display: block; font-size: 15px; }
+  .sg-verdict.sg-ok b { color: var(--sg-good); }
+  .sg-checks { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 2px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .sg-checks .sg-yes { color: var(--sg-good); }
+  .sg-checks .sg-no { color: var(--sg-bad); }
+  .sg-root .sg-plan { margin: 0 0 10px; padding-left: 1.4em; font-size: 14px; }
+  .sg-plan li { margin: 2px 0; }
+  .sg-graph svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .sg-root .sg-point { margin: 12px 0 0; font-size: 15px; font-weight: 600; }
+</style>
+
+{{- range slice "stovetop-model" "stovetop-outcome" "stovetop-sim" "stovetop-presets" "stovetop-timeline" }}
+{{- $js := resources.Get (printf "js/%s.js" .) | minify | fingerprint }}
+<script src="{{ $js.RelPermalink }}" integrity="{{ $js.Data.Integrity }}"></script>
+{{- end }}
+{{- $id := printf "sg%d" .Ordinal }}
+
+<section class="sg-root">
+  <ol class="sg-flow">
+    <li><b>Inputs</b>thickness · starting temperature · doneness target</li>
+    <li><b>Controls</b>burner · flip schedule · removal time</li>
+    <li><b>Targets</b>Side A browned ✓ · Side B browned ✓ · center on target ✓</li>
+  </ol>
+
+  <div class="sg-main">
+    <div>
+      <div class="sg-panel">
+        <p class="sg-h">The food (inputs)</p>
+        <div class="sg-field">
+          <div class="sg-field-head"><label for="{{ $id }}-thick">Thickness</label><output data-out="thickness"></output></div>
+          <input type="range" id="{{ $id }}-thick" data-in="thickness" min="0.75" max="2.5" step="0.25" value="1.5">
+        </div>
+        <div class="sg-field">
+          <div class="sg-field-head"><label for="{{ $id }}-start">Starting temperature</label><output data-out="start"></output></div>
+          <input type="range" id="{{ $id }}-start" data-in="start" min="35" max="70" step="1" value="40">
+        </div>
+        <div class="sg-field">
+          <div class="sg-field-head"><label>Doneness target (center)</label><output data-out="doneness"></output></div>
+          <div class="sg-seg" role="group" aria-label="Doneness target"></div>
+        </div>
+      </div>
+      <div class="sg-panel">
+        <p class="sg-h">Your strategy (controls)</p>
+        <div class="sg-field">
+          <div class="sg-field-head"><label for="{{ $id }}-pre">Preheat burner (5 min)</label><output data-out="preheat"></output></div>
+          <input type="range" id="{{ $id }}-pre" data-in="preheat" min="30" max="100" step="5" value="70">
+        </div>
+        <div class="sg-field">
+          <div class="sg-field-head"><label for="{{ $id }}-cook">Burner once the food is in</label><output data-out="burner"></output></div>
+          <input type="range" id="{{ $id }}-cook" data-in="burner" min="30" max="100" step="5" value="70">
+        </div>
+        <div class="sg-field">
+          <div class="sg-field-head"><label for="{{ $id }}-flip">Flip every</label><output data-out="every"></output></div>
+          <input type="range" id="{{ $id }}-flip" data-in="every" min="0.5" max="8" step="0.25" value="2.75">
+        </div>
+        <div class="sg-field">
+          <div class="sg-field-head"><label for="{{ $id }}-rem">Remove after</label><output data-out="remove"></output></div>
+          <input type="range" id="{{ $id }}-rem" data-in="remove" min="1" max="20" step="0.25" value="5.5">
+        </div>
+        <button type="button" class="sg-find">Find a valid strategy</button>
+        <p class="sg-search-note" aria-live="polite"></p>
+      </div>
+    </div>
+
+    <div class="sg-panel sg-result">
+      <div class="sg-verdict"></div>
+      <p class="sg-h">The plan</p>
+      <ol class="sg-plan"></ol>
+      <div class="sg-graph"><svg role="img"></svg></div>
+      <p class="sg-point">Cooking is choosing controls so that the center's doneness and both sides' browning line up at about the right time.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const $ = (sel) => root.querySelector(sel);
+    const M = window.StovetopModel, OUT = window.StovetopOutcome, P = window.StovetopPresets, T = window.StovetopTimeline;
+    const { DT, FOOD_EXTRA, stepFoodSided, otherSide } = M;
+    const UID = '{{ printf "sg%d" .Ordinal }}';
+    const REST = 4; // minutes shown after removal (the center peaks within about two)
+    const DONENESS = [
+      { name: 'Rare', range: { min: 120, max: 130 } },
+      { name: 'Medium-rare', range: { min: 130, max: 140 } },
+      { name: 'Medium', range: { min: 140, max: 150 } },
+    ];
+    const fmtClock = (min) => { const sec = Math.round(min * 60); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
+    const fmtT = (t) => `${Math.round(t)}°F`;
+    const SETTING_NAMES = { 100: 'High', 70: 'Medium', 40: 'Low' };
+    const burnerName = (p) => (SETTING_NAMES[p] ? `${SETTING_NAMES[p]} (${p}%)` : `${p}%`);
+
+    // ---- State: the problem and the plan ----
+    const problem = { thickness: 1.5, start: 40, doneness: 1 };
+    const plan = { preheat: 70, burner: 70, every: 2.75, remove: 5.5 };
+    const flipTimes = (p) => { const out = []; for (let m = p.every; m < p.remove - 0.05; m += p.every) out.push(m); return out; };
+
+    // A plan as a simulator run: preheat, add the food, set the burner, flip on schedule, remove, then rest
+    function runFor(pr, pl) {
+      const actions = [{ t: P.PREHEAT, type: 'addFood' }, { t: P.PREHEAT, type: 'setBurner', value: pl.burner }];
+      for (const m of flipTimes(pl)) actions.push({ t: P.PREHEAT + m * 60, type: 'flip' });
+      actions.push({ t: P.PREHEAT + pl.remove * 60, type: 'removeFood' }, { t: P.PREHEAT + (pl.remove + REST) * 60, type: 'pause' });
+      return P.simulate({ initial: { burner: pl.preheat, thickness: pr.thickness, initialFoodTemp: pr.start }, actions }, { centerTarget: DONENESS[pr.doneness].range });
+    }
+
+    // ---- Search: for each burner pair and flip interval, cook once in the pan; at every candidate removal time,
+    // play out the rest (carryover) from that moment and check all three targets at serving time ----
+    function restOutcome(snap, range) {
+      const s = { ...snap, foodState: 'removed' };
+      let bA = snap.bA, bB = snap.bB, peak = s.centerTemp;
+      for (let i = 0; i < 20 * 60 / DT; i++) {
+        stepFoodSided(s, DT);
+        bA += OUT.browningRate(s.sideATemp) * DT;
+        bB += OUT.browningRate(s.sideBTemp) * DT;
+        if (s.centerTemp > peak) peak = s.centerTemp;
+        else if (s.sideATemp < 230 && s.sideBTemp < 230) break; // past the peak, and no more browning
+      }
+      return { bA, bB, peak, ok: OUT.getBrowningLevelStatus(bA) === 'good' && OUT.getBrowningLevelStatus(bB) === 'good' && OUT.getCenterStatus(peak, range) === 'target' };
+    }
+    function searchCombo(pr, preheat, burner, every) {
+      const range = DONENESS[pr.doneness].range, mid = (range.min + range.max) / 2;
+      const s = { panTemp: M.MODEL.roomTemp, sideATemp: pr.start, sideBTemp: pr.start, centerTemp: pr.start, burner: preheat, foodState: 'waiting', panContactSide: 'B', thickness: pr.thickness };
+      for (let i = 0; i < P.PREHEAT / DT; i++) stepFoodSided(s, DT);
+      s.foodState = 'inPan'; s.burner = burner;
+      let bA = 0, bB = 0, best = null, nextFlip = every;
+      for (let i = 1; i <= 20 * 60 / DT; i++) {
+        const m = i * DT / 60;
+        stepFoodSided(s, DT);
+        bA += OUT.browningRate(s.sideATemp) * DT;
+        bB += OUT.browningRate(s.sideBTemp) * DT;
+        if (m >= nextFlip - 1e-9) { s.panContactSide = otherSide(s.panContactSide); nextFlip += every; }
+        if (s.centerTemp > range.max) break; // past the target in the pan already
+        if (i % (15 / DT) !== 0 || s.centerTemp < range.min - 35 || m < 1) continue; // try removing every 15 s near the end
+        const r = restOutcome({ ...s, bA, bB }, range);
+        if (!r.ok) continue;
+        const flips = Math.floor((m - 0.05) / every);
+        // prefer a center in the middle of its range, browning near the middle of "good", fewer flips, and less time
+        const score = Math.abs(r.peak - mid) / 4 + Math.abs(Math.log(r.bA / 1.8)) * 2 + Math.abs(Math.log(r.bB / 1.8)) * 2 + flips * 0.25 + m * 0.05 + (preheat !== burner ? 0.1 : 0);
+        if (!best || score < best.score) best = { score, plan: { preheat, burner, every, remove: m } };
+      }
+      return best;
+    }
+    async function findStrategy() {
+      const combos = [];
+      for (const burner of [40, 50, 60, 70, 80, 90, 100]) for (const preheat of [...new Set([burner, 100])]) for (const every of [0.75, 1, 1.5, 2, 2.5, 3, 4, 6]) combos.push([preheat, burner, every]);
+      let best = null;
+      for (let i = 0; i < combos.length; i++) {
+        const r = searchCombo(problem, ...combos[i]);
+        if (r && (!best || r.score < best.score)) best = r;
+        if (i % 8 === 7) { note.textContent = `Searching… ${Math.round(((i + 1) / combos.length) * 100)}%`; await new Promise((ok) => setTimeout(ok, 0)); }
+      }
+      return best;
+    }
+
+    // ---- Rendering ----
+    const svg = $('.sg-graph svg'), verdictEl = $('.sg-verdict'), planEl = $('.sg-plan'), note = $('.sg-search-note');
+    const seg = $('.sg-seg');
+    seg.innerHTML = DONENESS.map((d, i) => `<button type="button" data-d="${i}">${d.name}</button>`).join('');
+
+    function render() {
+      const range = DONENESS[problem.doneness].range;
+      const s = runFor(problem, plan), o = s.outcome;
+      // inputs and controls
+      root.querySelectorAll('[data-in]').forEach((el) => { const k = el.dataset.in; el.value = k in plan ? plan[k] : problem[k]; });
+      const out = (k, text) => { root.querySelector(`[data-out="${k}"]`).textContent = text; };
+      out('thickness', `${problem.thickness} in`); out('start', fmtT(problem.start));
+      out('doneness', `${range.min}–${range.max}°F`);
+      seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', +b.dataset.d === problem.doneness));
+      out('preheat', burnerName(plan.preheat)); out('burner', burnerName(plan.burner));
+      out('every', `${fmtClock(plan.every)} min`); out('remove', `${fmtClock(plan.remove)} min`);
+
+      // the plan, as steps
+      const flips = flipTimes(plan);
+      const steps = [
+        `Preheat the pan on ${burnerName(plan.preheat)} for 5:00.`,
+        'Add the food (Side B down).',
+        plan.burner !== plan.preheat ? `Turn the burner to ${burnerName(plan.burner)}.` : `Keep the burner at ${burnerName(plan.burner)}.`,
+        flips.length ? `Flip at ${flips.map(fmtClock).join(', ')}.` : 'Don’t flip.',
+        `Remove at ${fmtClock(plan.remove)} (center ${fmtT(o.centerAtRemoval)}).`,
+        o.centerMax - o.centerAtRemoval >= 1 ? `Rest: carryover takes the center to ${fmtT(o.centerMax)}.` : `Rest: the center holds at about ${fmtT(o.centerMax)}.`,
+      ];
+      planEl.innerHTML = steps.map((t) => `<li>${t}</li>`).join('');
+
+      // did it work?
+      const v = T.verdict(s);
+      verdictEl.className = `sg-verdict${v.ok ? ' sg-ok' : ''}`;
+      verdictEl.innerHTML = `<b>${v.ok ? '✓ Targets met at serving' : '✗ Not all targets met'}</b>` +
+        `<div class="sg-checks">${v.parts.map((p) => `<span class="${p.good ? 'sg-yes' : 'sg-no'}">${p.text}</span>`).join('')}</div>`;
+
+      T.draw(svg, s, { id: `${UID}-tl`, width: Math.max(320, svg.clientWidth || 640), compact: false });
+      svg.setAttribute('aria-label', `Timeline of the plan. ${v.parts.map((p) => p.text.slice(2)).join('. ')}.`);
+    }
+
+    // ---- Controls ----
+    root.querySelectorAll('[data-in]').forEach((el) => el.addEventListener('input', () => {
+      const k = el.dataset.in;
+      if (k in plan) plan[k] = +el.value; else problem[k] = +el.value;
+      note.textContent = '';
+      render();
+    }));
+    seg.addEventListener('click', (e) => { if (e.target.dataset.d) { problem.doneness = +e.target.dataset.d; note.textContent = ''; render(); } });
+    const findBtn = $('.sg-find');
+    findBtn.addEventListener('click', async () => {
+      findBtn.disabled = true;
+      note.textContent = 'Searching…';
+      const best = await findStrategy();
+      findBtn.disabled = false;
+      if (best) {
+        Object.assign(plan, best.plan, { remove: Math.round(best.plan.remove * 4) / 4 });
+        render();
+        // the slider snaps removal to 15 s; check the snapped plan still works
+        note.textContent = T.verdict(runFor(problem, plan)).ok ? 'Found one. The controls are set to it; try nudging them to see what breaks.' : 'Found a near miss (the removal time had to be rounded); nudge the removal time.';
+      } else {
+        note.textContent = 'No plan in the search worked for this food. Very thin food is hard: its center finishes before both sides can brown.';
+      }
+    });
+
+    let lastW = 0;
+    new ResizeObserver(() => { if (svg.clientWidth !== lastW) { lastW = svg.clientWidth; render(); } }).observe($('.sg-graph'));
+    render();
+  })();
+</script>

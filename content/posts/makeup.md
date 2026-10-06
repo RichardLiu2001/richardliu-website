@@ -4,22 +4,46 @@ draft = false
 title = 'Makeup'
 +++
 
+{{< fig title="A face, layer by layer" kind="interactive"
+    caption="Makeup goes on in layers, in a fairly fixed order, from bare skin to the final setting layer."
+    how="Click a step to build the face up to that layer. Press **Expand layers** to fan the layers apart, then click a step to isolate it." >}}
 {{< makeup-layers >}}
+{{< /fig >}}
 
-## 1. Common Goals
+Where do you think the most valuable real estate in the world is? Manhattan? Or perhaps Hong Kong?
+
+Sike! It’s the **40 square inches of your face**.
+
+For an area the size of about **4.5 Post-it notes**, humanity has developed foundation, concealer, primer, blush, bronzer, contour, highlighter, setting powder, finishing powder, eyeshadow, eyeliner, mascara, brow pencils, lip liners, lipstick, gloss, and dozens of different brushes, sponges, and other little implements to apply all of it.
+
+**What the fuck do all of these things do? And why the fuck are there so many?**
+
+
+## 1. Goals of Makeup
 
 ### 1a. Face Regions
-Your face can be split up into several commonly targeted regions which correspond to physical structures in your face.
+As a prerequisite, let's first formalize the face. The face can be split up into several commonly targeted regions which correspond to physical facial structures.
 
 ```sql
 CREATE TABLE FACE_REGIONS(REGION PK, DESCRIPTION);
 ```
-{{< face-regions >}}
+- Table rows are omitted in favor of Figure 2 below.
 
+{{< fig title="Face regions" kind="interactive"
+    caption="The regions of the face that makeup targets: the rows of `FACE_REGIONS`."
+    how="Click a region, on the face or in the list, to highlight and label it. **Show all** highlights every region and **Clear** resets." >}}
+{{< face-regions >}}
+{{< /fig >}}
 ### 1b. BATs
+Now, we have enough to define:
+
 **Beauty Aesthetic Target (BAT)**: a commonly desired visual characteristic of a face that beauty-oriented makeup attempts to create, strengthen, or preserve.
-- A BAT is not a product or technique. It is the desired visual endpoint.
-- BATs can vary by culture or individual. Below, I'm using commonly accepted BATs.
+- A BAT is not a product or technique. Rather, it is the desired visual endpoint.
+- There are three main categories of BATs:
+    1. **Surface health**: make the skin and face appear more healthy
+    2. **Feature salience**: make features stand out more
+    3. **Geometry proportion**: make features look larger
+- BATs can vary by culture or individual. Below, I'm using common BATs.
 ```sql
 CREATE TABLE BATS(BAT PK, DESCRIPTION, FACE_REGIONS[] FK);
 ```
@@ -43,7 +67,7 @@ CREATE TABLE BATS(BAT PK, DESCRIPTION, FACE_REGIONS[] FK);
 | `PROMINENT_CHEEKBONES` | `GEOMETRY_PROPORTION` | `[CHEEKS]` | Cheekbone structure appears more prominent |
 | `DEFINED_JAW` | `GEOMETRY_PROPORTION` | `[JAW, CHIN]` | Jawline/chin boundary appears more structurally defined |
 
-If you asked someone why they are using a makeup product, the BAT is most likely the deepest answer that can be verbalized. Going deeper than the BAT is less clear and goes into anthropology / evolutionary biology. We do not need to go to the level of "cheek redness is attractive because ancestral humans evolved to detect blood perfusion as a fertility signal". We can just assume BATs like `red cheeks = good` as axiomatic and a terminal node.
+If you asked someone why they are using a makeup product, the BAT is most likely the deepest answer that can be verbalized. Going deeper than the BAT is less clear-cut and can cross into anthropology / evolutionary biology. We do not need to go to the level of _"cheek redness is attractive because ancestral humans evolved to detect blood perfusion as a fertility signal"_. We can just assume BATs like `red cheeks = good` as axiomatic and a terminal node.
 - Notice how I explain this. BATS has `FACE_REGIONS` as a FK. Thus I cannot explain BATs before explaining `FACE_REGIONS`. Just like a forward-declaration error in C++ or a DAG traversal.
 
 ## 2. Execution
@@ -103,29 +127,30 @@ CREATE TABLE TOOLS (
 | `EYELASH_CURLER` | Physically curls eyelashes |
 | `TWEEZERS` | Grips individual hairs or false lashes |
 
+## 3. Makeup
+Finally, the things you put on your face come in several common physical forms:
 ```sql
 CREATE TABLE FORMULATIONS (
     FORMULATION PK,
     DESCRIPTION
 );
-
 ```
 | FORMULATION | DESCRIPTION |
 |---|---|
-| `POWDER` | Dry particulate makeup, loose or pressed |
-| `LIQUID` | Flowing liquid formulation |
+| `POWDER` | Dry particles, loose or pressed |
+| `LIQUID` | Flowing liquid |
 | `CREAM` | Thick, spreadable semi-solid/emulsion |
-| `GEL` | Gel-like semi-solid formulation |
+| `GEL` | Gel-like, semi-solid |
 | `BALM` | Soft waxy/oily semi-solid |
 | `WAX` | Firmer wax-based formulation, common in brow/lip products |
 | `SOLID` | Solid cosmetic material, e.g. traditional lipstick or pencil core |
 
-## 3. Makeup
-so
 Now we can define makeup as products that:
 - Target one or more BATs (for which there are target `FACE_REGIONS[]`), and
-- Are typically applied in one or more LAYERs, and
-- Perform the change via modifying appearance and/or physical structure.
+- Are typically applied in one or more `LAYER`s, and
+- Come in one or more `FORMULATION`s, and
+- Are applied using one or more `TOOL`s, and
+- Perform the change via `APPEARANCE_CHANGE`s and/or physical `STRUCTURE_CHANGE`s.
 ```sql
 CREATE TABLE MAKEUP (
     PRODUCT PK,
@@ -164,6 +189,21 @@ Now, we can easily understand and conceptualize each makeup product:
 | `SETTING_POWDER` | Reduces shine and helps set complexion products | `[SMOOTH_LOOKING_SKIN]` | `[FINISH_SET]` | `[POWDER]` | `[BRUSH, POWDER_PUFF]` | `[FINISH, OPACITY]` | `[]` |
 | `SETTING_SPRAY` | Alters final finish and helps makeup persist | `[]` | `[FINISH_SET]` | `[LIQUID]` | `[]` | `[FINISH]` | `[]` |
 
+{{< fig title="Why, when, where and with what" kind="interactive"
+    caption="One row of `MAKEUP`, traced out: its BATs (why), its layer (when), the face regions those BATs target (where), and its typical tools (with)."
+    how="Pick a product at the top." >}}
 {{< makeup-product-map >}}
+{{< /fig >}}
+
+And now that we've spent an unreasonable time turning makeup into relational schemas, we can now actually use SQL to answer our questions.
+
+{{< fig title="The Makeup Oracle" kind="interactive"
+    caption="An informal question, compiled to SQL over the tables above, and the one-row answer that query returns."
+    how="Choose a question type, then pick a product, tool or BAT. Only the highlighted `WHERE` literal changes; the rest of the query is fixed." >}}
+{{< makeup-oracle >}}
+{{< /fig >}}
+
+
 
 ### The Noetic Point
+Makeup application is nicely represented as a 2D topographic map.

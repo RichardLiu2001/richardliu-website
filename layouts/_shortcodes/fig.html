@@ -1,0 +1,24 @@
+{{- /*
+  Numbered figure frame: puts a diagram on a tinted band so it's clearly separate from the text, with a
+  caption on top ("Figure N", an Interactive/Animation tag, a title, what it shows, and how to use it).
+  Numbers come from a CSS counter in assets/css/extended/custom.css, so they follow page order.
+  Usage in a post (title is required; kind, caption and how are optional and take Markdown):
+    {{< fig title="Face regions" kind="interactive" caption="What it shows." how="Click a region." >}}
+    {{< face-regions >}}
+    {{< /fig >}}
+  kind: "interactive" (reader controls it), "animation" (plays by itself), or omitted for a static figure.
+  The body can be a diagram shortcode (as above) or plain Markdown, such as an image: ![alt](src)
+*/ -}}
+{{- $kind := .Get "kind" }}
+{{- $title := .Get "title" | default "" }}
+{{- if not $title }}{{ errorf "fig shortcode needs a title: %s" .Position }}{{ end }}
+<figure class="fig{{ with $kind }} fig-{{ . }}{{ end }}">
+  <figcaption class="fig-cap">
+    <span class="fig-eyebrow"><span class="fig-num"></span>{{ with $kind }}<span class="fig-kind">{{ . }}</span>{{ end }}</span>
+    <span class="fig-title">{{ $title | $.Page.RenderString }}</span>
+    {{- with .Get "caption" }}<span class="fig-text">{{ . | $.Page.RenderString }}</span>{{ end }}
+    {{- with .Get "how" }}<span class="fig-how"><span class="fig-how-label">How to use</span>{{ . | $.Page.RenderString }}</span>{{ end }}
+  </figcaption>
+  {{- /* A diagram shortcode's output is already HTML; anything else is Markdown */}}
+  {{- if hasPrefix (trim .Inner " \n") "<" }}{{ .Inner }}{{ else }}{{ .Inner | $.Page.RenderString (dict "display" "block") }}{{ end }}
+</figure>

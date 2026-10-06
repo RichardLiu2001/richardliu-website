@@ -1,0 +1,702 @@
+{{- /*
+  Cooking-outcome simulator: can the food surface brown and the food center reach its target at the same time?
+  Three layers, kept separate:
+    physics   assets/js/stovetop-model.js    pan / surface / center temperatures (same as stovetop-food.html)
+    outcome   assets/js/stovetop-outcome.js  center target range, accumulated browning, statuses
+    rendering this file                      schematic (assets/js/stovetop-scene.js), one timeline graph with
+                                             outcome strips underneath, status
+  Usage in a post: {{< stovetop-outcome >}}
+*/ -}}
+<style>
+  .so-root {
+    --so-pan: #eb6834;         /* series colors, same as stovetop-food.html */
+    --so-surface: #4a3aa7;
+    --so-center: #1baf7a;
+    --so-flame: #2a78d6;
+    --so-good: #2f8f5b;        /* status: on target */
+    --so-bad: #c2410c;         /* status: burnt / overdone */
+    --stk-accent: var(--so-flame);
+    width: min(var(--wide-width, 1100px), 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+    font-size: 14px; line-height: 1.4; color: var(--primary);
+  }
+  :root[data-theme="dark"] .so-root {
+    --so-pan: #d95926;
+    --so-surface: #9085e9;
+    --so-center: #199e70;
+    --so-flame: #3987e5;
+    --so-good: #4cc38a;
+    --so-bad: #f07a4a;
+  }
+  .so-root * { box-sizing: border-box; }
+  .so-root svg { display: block; overflow: visible; }
+  .so-root text { font-family: inherit; font-variant-numeric: tabular-nums; }
+
+  /* ---- Takeaway ---- */
+  .so-takeaway { margin: 0 0 16px; }
+  .so-rules { display: flex; flex-wrap: wrap; gap: 6px 28px; margin: 8px 0 0; font-size: 15px; }
+  .so-rules b { font-weight: 700; padding-bottom: 1px; border-bottom: 3px solid var(--so-key); margin-right: 6px; }
+  .so-rules span { color: var(--secondary); }
+  .so-root .so-punch { margin: 8px 0 0; font-size: 15px; font-weight: 600; }
+
+  /* ---- Controls ---- */
+  .so-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 28px; margin-bottom: 14px; }
+  .so-burner { display: flex; align-items: center; gap: 6px 14px; }
+  .so-burner-info { display: flex; flex-direction: column; gap: 1px; min-width: 9.5em; }
+  .so-burner-title { color: var(--secondary); font-size: 13px; }
+  .so-burner-name { font-size: 20px; font-weight: 700; line-height: 1.2; }
+  .so-burner-detail { color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .so-transport { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .so-root button {
+    font: inherit; font-size: 13px; line-height: 1.2; padding: 5px 12px; cursor: pointer; white-space: nowrap;
+    color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary); border-radius: 999px;
+  }
+  .so-root button:focus-visible { outline: 2px solid var(--so-flame); outline-offset: 2px; }
+  .so-root button[aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); font-weight: 600; }
+  .so-root .so-play { width: 6.6em; font-weight: 600; color: var(--theme); background: var(--primary); border-color: var(--primary); }
+  .so-root .so-add { font-weight: 600; border-color: var(--so-surface); box-shadow: inset 0 0 0 1px var(--so-surface); }
+  .so-root .so-add:disabled { cursor: default; font-weight: 400; color: var(--secondary); border-color: var(--border); box-shadow: none; }
+  .so-speed { display: inline-flex; align-items: center; gap: 4px; }
+  .so-speed-label { color: var(--secondary); font-size: 13px; margin-right: 2px; }
+  .so-clock { min-width: 8.5em; color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  /* ---- Layout ---- */
+  .so-main { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 14px; align-items: start; }
+  .so-side { display: grid; gap: 14px; position: sticky; top: 12px; }
+  .so-graphs { display: grid; gap: 14px; min-width: 0; }
+  @media (max-width: 860px) {
+    .so-main { grid-template-columns: minmax(0, 1fr); }
+    .so-side { position: static; }
+  }
+  .so-panel { min-width: 0; padding: 14px; background: var(--entry); border: 1px solid var(--border); border-radius: 12px; }
+  .so-scene svg { width: 100%; max-width: 520px; height: auto; margin: 0 auto; }
+
+  /* ---- Status ---- */
+  .so-status-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .so-status-title { font-weight: 700; }
+  .so-cooktime { color: var(--secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .so-stat { display: grid; grid-template-columns: 7.2em auto 1fr; align-items: center; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+  .so-stat-name { font-size: 13px; color: var(--secondary); }
+  .so-stat-name i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; background: var(--so-key); }
+  .so-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; white-space: nowrap; }
+  .so-badge svg { width: 16px; height: 16px; flex: none; }
+  .so-badge[data-state="good"] { color: var(--so-good); }
+  .so-badge[data-state="bad"] { color: var(--so-bad); }
+  .so-badge[data-state="wait"], .so-badge[data-state="none"] { color: var(--secondary); }
+  .so-stat-detail { font-size: 12.5px; color: var(--secondary); text-align: right; font-variant-numeric: tabular-nums; }
+  .so-verdict { margin-top: 6px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 13.5px; }
+  .so-verdict b { display: block; font-size: 15px; }
+  .so-verdict b svg { display: inline-block; width: 16px; height: 16px; vertical-align: -3px; margin-right: 6px; }
+  .so-verdict.so-aligned { border-color: var(--so-good); box-shadow: inset 0 0 0 1px var(--so-good); }
+  .so-verdict.so-aligned b { color: var(--so-good); }
+  .so-hint { margin: 10px 0 0; font-size: 12.5px; color: var(--secondary); }
+
+  /* ---- Graphs ---- */
+  .so-graph { position: relative; }
+  .so-graph-title { margin: 0; font-weight: 700; }
+  .so-graph-sub { margin: 0 0 6px; font-size: 13px; color: var(--secondary); }
+  .so-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 6px; padding: 0; list-style: none; font-size: 13px; color: var(--secondary); }
+  .so-legend li { margin: 0; display: inline-flex; align-items: center; gap: 6px; }
+  .so-legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
+  .so-legend i.so-swatch-band { height: 10px; border-radius: 2px; background: color-mix(in srgb, var(--so-good) 22%, transparent); border: 1px solid color-mix(in srgb, var(--so-good) 60%, transparent); }
+  .so-graph svg { width: 100%; touch-action: pan-y; }
+  .so-grid line { stroke: var(--border); }
+  .so-axis text { fill: var(--secondary); font-size: 12px; }
+  .so-axis .so-baseline { stroke: var(--tertiary); }
+  .so-target-fill { fill: var(--so-good); fill-opacity: .16; }
+  .so-target-edge { stroke: var(--so-good); stroke-opacity: .7; stroke-width: 1; }
+  .so-burnt-fill { fill: var(--so-bad); fill-opacity: .14; }
+  .so-burnt-edge { stroke: var(--so-bad); stroke-opacity: .7; stroke-width: 1; }
+  .so-region-label { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .so-region-label.so-under { fill: var(--secondary); }
+  .so-region-label.so-good { fill: var(--so-good); }
+  .so-region-label.so-bad { fill: var(--so-bad); }
+  .so-added line { stroke: var(--primary); stroke-width: 1.2; stroke-dasharray: 3 3; }
+  /* Outcome strips under the graph: same x axis */
+  .so-strip-track { fill: var(--code-bg, rgba(127,127,127,.1)); }
+  .so-seg-underdone { fill: var(--tertiary); fill-opacity: .35; }
+  .so-seg-target { fill: var(--so-good); fill-opacity: .35; }
+  .so-seg-overdone { fill: var(--so-bad); fill-opacity: .35; }
+  .so-seg-ready { fill: var(--so-good); fill-opacity: .7; }
+  .so-seg-tick { stroke: var(--entry); stroke-width: 1.5; }
+  .so-strip-text { font-size: 10.5px; fill: var(--primary); }
+  .so-strip-row { font-size: 11.5px; fill: var(--secondary); }
+  .so-strip-now { font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+  .so-strip-now.so-k-good { fill: var(--so-good); }
+  .so-strip-now.so-k-bad { fill: var(--so-bad); }
+  .so-strip-now.so-k-wait { fill: var(--secondary); }
+  .so-playhead { stroke: var(--primary); stroke-width: 1; stroke-opacity: .45; }
+  .so-curve { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .so-dot { stroke: var(--entry); stroke-width: 2; }
+  .so-graph text.so-label { font-size: 12px; paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .so-label.so-strong { fill: var(--primary); font-weight: 600; }
+  .so-label.so-muted { fill: var(--secondary); }
+  .so-label.so-good { fill: var(--so-good); font-weight: 600; }
+  .so-hover line { stroke: var(--tertiary); }
+  .so-hover circle { fill: var(--entry); stroke-width: 2; }
+  .so-tip {
+    position: absolute; pointer-events: none; transform: translate(-50%, calc(-100% - 12px)); z-index: 1;
+    padding: 5px 9px; border-radius: 6px; font-size: 12px; line-height: 1.45; white-space: nowrap;
+    font-variant-numeric: tabular-nums; color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary);
+  }
+  .so-tip b { font-weight: 600; }
+  .so-tip i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .so-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+
+{{- $modelJS := resources.Get "js/stovetop-model.js" | minify | fingerprint }}
+<script src="{{ $modelJS.RelPermalink }}" integrity="{{ $modelJS.Data.Integrity }}"></script>
+{{- $outcomeJS := resources.Get "js/stovetop-outcome.js" | minify | fingerprint }}
+<script src="{{ $outcomeJS.RelPermalink }}" integrity="{{ $outcomeJS.Data.Integrity }}"></script>
+{{- $knobJS := resources.Get "js/stovetop-knob.js" | minify | fingerprint }}
+<script src="{{ $knobJS.RelPermalink }}" integrity="{{ $knobJS.Data.Integrity }}"></script>
+{{- $sceneJS := resources.Get "js/stovetop-scene.js" | minify | fingerprint }}
+<script src="{{ $sceneJS.RelPermalink }}" integrity="{{ $sceneJS.Data.Integrity }}"></script>
+
+<div class="so-root">
+  <div class="so-takeaway">
+    <div class="so-rules">
+      <div><b style="--so-key: var(--so-surface)">Surface</b><span>temperature × time → browning</span></div>
+      <div><b style="--so-key: var(--so-center)">Center</b><span>temperature → doneness</span></div>
+    </div>
+    <p class="so-punch">Good cooking lines up both targets.</p>
+  </div>
+
+  <div class="so-controls">
+    <div class="so-burner">
+      <svg class="so-knob" aria-label="Burner power"></svg>
+      <div class="so-burner-info">
+        <span class="so-burner-title">Burner</span>
+        <span class="so-burner-name"></span>
+        <span class="so-burner-detail"></span>
+      </div>
+    </div>
+    <div class="so-transport">
+      <button type="button" class="so-play">▶ Play</button>
+      <button type="button" class="so-add">+ Add food</button>
+      <button type="button" class="so-reset">↺ Reset</button>
+      <span class="so-speed" role="group" aria-label="Simulation speed">
+        <span class="so-speed-label">Speed</span>
+      </span>
+      <span class="so-clock"></span>
+    </div>
+  </div>
+
+  <div class="so-main">
+    <div class="so-side">
+      <div class="so-panel so-scene">
+        <svg role="img" aria-label="Cutaway of a pan on a gas burner, with a steak beside it or in it"></svg>
+      </div>
+      <div class="so-panel so-status" aria-live="off">
+        <div class="so-status-head">
+          <span class="so-status-title">Cooking outcome</span>
+          <span class="so-cooktime"></span>
+        </div>
+        <div class="so-stat" style="--so-key: var(--so-surface)">
+          <span class="so-stat-name"><i></i>Food surface</span>
+          <span class="so-badge so-b-surface"></span>
+          <span class="so-stat-detail so-d-surface"></span>
+        </div>
+        <div class="so-stat" style="--so-key: var(--so-center)">
+          <span class="so-stat-name"><i></i>Food center</span>
+          <span class="so-badge so-b-center"></span>
+          <span class="so-stat-detail so-d-center"></span>
+        </div>
+        <div class="so-verdict"></div>
+        <p class="so-hint">Preheat, add the food, and watch both statuses. Then reset and try a lower or higher burner.</p>
+      </div>
+    </div>
+
+    <div class="so-graphs">
+      <div class="so-panel so-graph so-thermal">
+        <p class="so-graph-title">One cooking timeline</p>
+        <p class="so-graph-sub">Top: the temperatures. Underneath, on the same time axis: what they mean. The center's doneness follows its temperature (the band on the graph); the surface's browning builds up from its whole temperature history, so it gets a strip, painted in crust color: pale, golden, dark brown, black once it's burnt.</p>
+        <ul class="so-legend">
+          <li><i style="background: var(--so-pan)"></i>Pan</li>
+          <li><i style="background: var(--so-surface)"></i>Food surface</li>
+          <li><i style="background: var(--so-center)"></i>Food center</li>
+          <li><i class="so-swatch-band"></i><span class="so-band-legend">Target center temperature</span></li>
+        </ul>
+        <svg role="img" aria-label="Pan, food surface and food center temperatures over time, with the target center temperature band. Underneath, on the same time axis, strips show the surface's browning, the center's doneness, and when both targets were met."></svg>
+        <div class="so-tip" hidden></div>
+      </div>
+    </div>
+  </div>
+  <p class="so-sr" aria-live="polite"></p>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const $ = (sel) => root.querySelector(sel);
+    const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+
+    // ==== Physics: state and thermal steps (no DOM, no outcome rules) ==============
+    const { MODEL, DT, PRESETS, FOOD, burnerWatts, stepWithFood } = window.StovetopModel;
+    const SAMPLE_STEPS = 20;  // history sample every 20 steps (1 simulated second)
+    const MAX_SAMPLES = 2400; // past this, history is thinned to every other sample
+    const INITIAL_BURNER = 70;
+    const SPEEDS = [3, 15, 60];
+
+    // ==== Outcome: interprets temperatures (assets/js/stovetop-outcome.js) =========
+    const OUT = window.StovetopOutcome;
+    const { CENTER_TARGET } = OUT;
+
+    const freshState = (burner, speed) => ({
+      time: 0, steps: 0, running: false, burner, speed,
+      panTemp: MODEL.roomTemp, surfaceTemp: FOOD.startTemp, centerTemp: FOOD.startTemp,
+      foodInPan: false, foodAddedAt: null, foodStart: null,
+      sampleEvery: SAMPLE_STEPS,
+      history: { time: [0], pan: [MODEL.roomTemp], surface: [null], center: [null], brown: [null] },
+      outcome: OUT.createSurfaceTracker(), // accumulated browning: outcome.browning.surface
+    });
+    const cookingTime = (s) => (s.foodInPan ? s.time - s.foodAddedAt : 0);
+
+    function recordHistory(s) {
+      const h = s.history;
+      h.time.push(s.time);
+      h.pan.push(s.panTemp);
+      h.surface.push(s.foodInPan ? s.surfaceTemp : null);
+      h.center.push(s.foodInPan ? s.centerTemp : null);
+      h.brown.push(s.foodInPan ? s.outcome.browning.surface : null);
+      if (h.time.length > MAX_SAMPLES) {
+        for (const k of Object.keys(h)) h[k] = h[k].filter((_, i) => i % 2 === 0);
+        s.sampleEvery *= 2;
+      }
+    }
+
+    function updatePhysics(s, dt) {
+      stepWithFood(s, dt);
+      s.steps += 1;
+      s.time = s.steps * dt;
+      if (s.foodInPan) s.outcome.update(s, cookingTime(s), dt);
+      if (s.steps % s.sampleEvery === 0) recordHistory(s);
+    }
+
+    // No temperature changes here: from the next step on, the pan → surface → center flows do that
+    function addFood(s) {
+      if (s.foodInPan) return false;
+      s.foodInPan = true;
+      s.foodAddedAt = s.time;
+      s.foodStart = { surface: s.surfaceTemp, center: s.centerTemp };
+      s.outcome.update(s, 0, 0);
+      return true;
+    }
+
+    let state = freshState(INITIAL_BURNER, 15);
+    let pending = 0;
+    function advance(simSeconds) {
+      pending += simSeconds;
+      while (pending >= DT) { updatePhysics(state, DT); pending -= DT; }
+    }
+    function resetSimulation() {
+      state = freshState(INITIAL_BURNER, state.speed);
+      pending = 0;
+    }
+
+    // ==== Rendering ===============================================================
+    const fmtT = (t) => `${Math.round(t)}°F`;
+    const fmtW = (w) => `${Math.round(w).toLocaleString('en-US')} W`;
+    const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+    const presetName = (pct) => (PRESETS.find(([, v]) => v === pct) || [])[0];
+    const NAMES = { pan: 'Pan', surface: 'Food surface', center: 'Food center' };
+    const Y_MAX = 600;
+    const X_SPANS = [10, 15, 20, 30, 45, 60, 90, 120]; // minutes; axes widen through these
+    const xSpanFor = (sec) => (X_SPANS.find((m) => m * 60 >= sec) || Math.ceil(sec / 3600) * 60) * 60;
+
+    // -- Schematic
+    const scene = window.StovetopScene($('.so-scene svg'), { foodStartTemp: FOOD.startTemp });
+
+    // -- A graph frame: size, scales, gridlines and axes (shared by both graphs)
+    function createFrame(svg, { xTitle, wideRight, size = [0.5, 240, 330], strips = 0 }) {
+      const f = { W: 0, H: 0, xMax: 0, yMax: Y_MAX, M: { top: 12, right: wideRight, bottom: 40 + strips, left: 50 } };
+      svg.innerHTML = '<g class="so-under-layer"></g><g class="so-grid"></g><g class="so-axis"></g><g class="so-over-layer"></g>';
+      const gridG = svg.querySelector('.so-grid'), axisG = svg.querySelector('.so-axis');
+      f.layer = svg.querySelector('.so-over-layer');
+      f.under = svg.querySelector('.so-under-layer');
+      f.plotW = () => f.W - f.M.left - f.M.right;
+      f.plotH = () => f.H - f.M.top - f.M.bottom;
+      f.sx = (t) => f.M.left + (t / f.xMax) * f.plotW();
+      f.sy = (temp) => f.M.top + (1 - temp / f.yMax) * f.plotH();
+      f.narrow = () => f.W < 480;
+      f.bottom = () => f.sy(0) + Math.max(0, strips - 8); // lowest point marker lines reach (through any strips)
+      // Returns true when the frame changed, so callers can redraw anything that depends on it
+      f.layout = (span, yMax = f.yMax) => {
+        const w = svg.clientWidth;
+        if (w === f.W && span === f.xMax && yMax === f.yMax) return false;
+        f.W = w; f.xMax = span; f.yMax = yMax;
+        f.M.right = f.narrow() ? 50 : wideRight;
+        f.H = Math.round(clamp(w * size[0], size[1], size[2])) + strips;
+        svg.setAttribute('viewBox', `0 0 ${f.W} ${f.H}`);
+        svg.style.height = `${f.H}px`;
+        const x0 = f.M.left, x1 = f.W - f.M.right, yBase = f.sy(0);
+        let grid = '', axis = '';
+        for (let temp = 0; temp <= f.yMax; temp += f.yMax <= 300 ? 50 : 100) {
+          const y = f.sy(temp).toFixed(1);
+          if (temp) grid += `<line x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" />`;
+          axis += `<text x="${x0 - 8}" y="${y}" dy="0.32em" text-anchor="end">${temp}°F</text>`;
+        }
+        const spanMin = f.xMax / 60, maxTicks = Math.max(2, Math.floor(f.plotW() / 48));
+        const step = [1, 2, 5, 10, 15, 30, 60, 120].find((s) => spanMin / s <= maxTicks) || 240;
+        for (let m = 0; m <= spanMin + 1e-9; m += step) axis += `<text x="${f.sx(m * 60).toFixed(1)}" y="${yBase + strips + 18}" text-anchor="middle">${m}</text>`;
+        axis += `<line class="so-baseline" x1="${x0}" x2="${x1}" y1="${yBase}" y2="${yBase}" />`;
+        axis += `<text x="${(x0 + x1) / 2}" y="${f.H - 4}" text-anchor="middle">${xTitle}</text>`;
+        gridG.innerHTML = grid;
+        axisG.innerHTML = axis;
+        return true;
+      };
+      return f;
+    }
+
+    // Path through one series' history samples; toX returns null for samples to skip
+    function seriesPath(s, k, toX, toY, from = '') {
+      const h = s.history;
+      let d = from;
+      for (let i = 0; i < h.time.length; i++) {
+        const v = h[k][i], x = v === null ? null : toX(h.time[i]);
+        if (x !== null) d += `${d ? 'L' : 'M'}${x.toFixed(1)} ${toY(v).toFixed(1)}`;
+      }
+      return d;
+    }
+
+    // Shared hover: a crosshair, dots and a tooltip, filled in by each graph's pick(px)
+    function attachHover(frame, svg, tip, pick) {
+      svg.insertAdjacentHTML('beforeend', '<g class="so-hover" visibility="hidden"><line /></g>');
+      const g = svg.querySelector('.so-hover'), line = g.querySelector('line');
+      let px = null;
+      const show = () => {
+        const p = px === null ? null : pick(px);
+        if (!p) { g.setAttribute('visibility', 'hidden'); tip.hidden = true; return; }
+        line.setAttribute('x1', p.x); line.setAttribute('x2', p.x);
+        line.setAttribute('y1', frame.M.top); line.setAttribute('y2', frame.sy(0));
+        g.querySelectorAll('circle').forEach((c) => c.remove());
+        g.insertAdjacentHTML('beforeend', p.dots.map((d) => `<circle r="4" cx="${p.x}" cy="${d.y}" style="stroke: ${d.color}" />`).join(''));
+        g.setAttribute('visibility', 'visible');
+        tip.innerHTML = p.html;
+        tip.hidden = false;
+        const box = svg.getBoundingClientRect(), panel = svg.parentElement.getBoundingClientRect();
+        const half = tip.offsetWidth / 2 + 4;
+        tip.style.left = `${clamp(box.left - panel.left + p.x, half, panel.width - half)}px`;
+        tip.style.top = `${Math.max(box.top - panel.top + p.tipY, tip.offsetHeight + 16)}px`;
+      };
+      const set = (e) => { px = e.clientX - svg.getBoundingClientRect().left; show(); };
+      svg.addEventListener('pointermove', set);
+      svg.addEventListener('pointerdown', set);
+      svg.addEventListener('pointerleave', () => { px = null; show(); });
+      return show;
+    }
+
+    // Sample at simulated time t (from history, or the live state past the last sample)
+    function sampleAt(s, t) {
+      const h = s.history, i = Math.round(t / (s.sampleEvery * DT));
+      if (i < h.time.length) return { time: h.time[i], pan: h.pan[i], surface: h.surface[i], center: h.center[i], brown: h.brown[i] };
+      return { time: s.time, pan: s.panTemp, surface: s.foodInPan ? s.surfaceTemp : null, center: s.foodInPan ? s.centerTemp : null, brown: s.foodInPan ? s.outcome.browning.surface : null };
+    }
+
+    // -- Thermal graph: pan, surface, center + the center's target band
+    const thermalSvg = $('.so-thermal svg'), thermalTip = $('.so-thermal .so-tip');
+    // Outcome strips: surface browning, center doneness, and a thin "ready" strip
+    const STRIP = { gap: 12, rowH: 16, rowGap: 6, readyH: 8 };
+    const ROWS = [['surface', 'Surface'], ['center', 'Center']];
+    const STRIPS_H = STRIP.gap + ROWS.length * (STRIP.rowH + STRIP.rowGap) + STRIP.readyH + 10;
+    const TF = createFrame(thermalSvg, { xTitle: 'Elapsed time (simulated minutes)', wideRight: 124, strips: STRIPS_H });
+    TF.layer.innerHTML =
+      '<defs class="so-strip-defs"></defs><g class="so-strips"></g>' +
+      '<g class="so-band"><rect class="so-target-fill" /><line class="so-target-edge" /><line class="so-target-edge" /><text class="so-label so-good" text-anchor="end" dy="0.32em"></text></g>' +
+      '<g class="so-added" visibility="hidden"><line /><text class="so-label so-strong"></text></g>' +
+      ['center', 'surface', 'pan'].map((k) => `<path class="so-curve so-c-${k}" style="stroke: var(--so-${k})" />`).join('') +
+      ['center', 'surface', 'pan'].map((k) => `<circle class="so-dot so-d-${k}" r="5" style="fill: var(--so-${k})" />`).join('') +
+      '<g class="so-ends"></g>' +
+      '<line class="so-playhead" visibility="hidden" />';
+    const tq = (sel) => thermalSvg.querySelector(sel);
+    $('.so-band-legend').textContent = `Target center temperature (${CENTER_TARGET.min}–${CENTER_TARGET.max}°F)`;
+
+    // The states over time, as runs: [{ from, to, state }] per strip. Browning from the surface's stored
+    // accumulated level (never its current temperature); doneness from the hottest the center has been so far.
+    function stripRuns(s) {
+      const runs = { surface: [], center: [], ready: [] };
+      if (!s.foodInPan) return runs;
+      const h = s.history;
+      let centerMax = -Infinity;
+      const push = (k, t, state) => {
+        const r = runs[k], last = r[r.length - 1];
+        if (last) last.to = t;
+        if (!last || last.state !== state) r.push({ from: t, to: t, state });
+      };
+      const visit = (t, level, center) => {
+        centerMax = Math.max(centerMax, center);
+        const o = { surface: OUT.getBrowningLevelStatus(level), center: OUT.getCenterStatus(centerMax) };
+        push('surface', t, o.surface); push('center', t, o.center);
+        push('ready', t, OUT.surfaceTargetsMet(o) ? 'ready' : 'none');
+      };
+      visit(s.foodAddedAt, 0, s.foodStart.center);
+      for (let i = 0; i < h.time.length; i++) if (h.time[i] > s.foodAddedAt && h.brown[i] !== null) visit(h.time[i], h.brown[i], h.center[i]);
+      visit(s.time, s.outcome.browning.surface, s.centerTemp);
+      return runs;
+    }
+    const STATE_TEXT = { under: 'under-browned', good: 'good', burnt: 'burnt', underdone: 'underdone', target: 'target', overdone: 'overdone' };
+    const UID = '{{ printf "so%d" .Ordinal }}';
+
+    // The browning strip is painted in crust color: a gradient through the stored browning level over time
+    function browningGradient(s, id) {
+      const h = s.history, x0 = TF.sx(s.foodAddedAt), x1 = TF.sx(s.time), span = Math.max(1, x1 - x0);
+      const pts = [[s.foodAddedAt, 0]];
+      for (let i = 0; i < h.time.length; i++) if (h.time[i] > s.foodAddedAt && h.brown[i] !== null) pts.push([h.time[i], h.brown[i]]);
+      pts.push([s.time, s.outcome.browning.surface]);
+      let stops = '', lastX = -Infinity;
+      pts.forEach(([t, level], i) => {
+        const x = TF.sx(t);
+        if (x - lastX < 3 && i < pts.length - 1) return;
+        lastX = x;
+        stops += `<stop offset="${((x - x0) / span).toFixed(4)}" stop-color="${OUT.browningColor(level)}" />`;
+      });
+      return `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x0.toFixed(1)}" x2="${x1.toFixed(1)}" y1="0" y2="0">${stops}</linearGradient>`;
+    }
+
+    function renderStrips(s) {
+      const x0 = TF.M.left, x1 = TF.W - TF.M.right, top = TF.sy(0) + STRIP.gap, runs = stripRuns(s);
+      const rowY = (i) => top + i * (STRIP.rowH + STRIP.rowGap);
+      let out = '', defs = '';
+      ROWS.forEach(([key, label], i) => {
+        const y = rowY(i), browning = key === 'surface', mid = y + STRIP.rowH / 2;
+        out += `<rect class="so-strip-track" x="${x0}" y="${y}" width="${x1 - x0}" height="${STRIP.rowH}" rx="3" />`;
+        out += `<text class="so-strip-row" x="${x0 - 8}" y="${mid}" dy="0.35em" text-anchor="end">${label}</text>`;
+        if (browning && runs[key].length) {
+          const id = `${UID}-brown`, a = TF.sx(s.foodAddedAt);
+          defs += browningGradient(s, id);
+          out += `<rect x="${a.toFixed(1)}" y="${y}" width="${Math.max(1, TF.sx(s.time) - a).toFixed(1)}" height="${STRIP.rowH}" fill="url(#${id})" />`;
+        }
+        runs[key].forEach((r, k) => {
+          const a = TF.sx(r.from), w = Math.max(1, TF.sx(r.to) - a), text = STATE_TEXT[r.state];
+          if (!browning) out += `<rect class="so-seg-${r.state}" x="${a.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${STRIP.rowH}" />`;
+          else if (k > 0) out += `<line class="so-seg-tick" x1="${a.toFixed(1)}" x2="${a.toFixed(1)}" y1="${y}" y2="${y + STRIP.rowH}" />`;
+          const ink = browning ? (r.state === 'burnt' ? '#fff' : '#2b1d12') : '';
+          if (w > text.length * 6 + 10) out += `<text class="so-strip-text" x="${(a + 5).toFixed(1)}" y="${mid}" dy="0.35em"${ink ? ` style="fill: ${ink}"` : ''}>${text}</text>`;
+        });
+        const now = runs[key][runs[key].length - 1];
+        if (now && !TF.narrow()) {
+          const swatch = browning ? `<rect x="${x1 + 8}" y="${mid - 5}" width="10" height="10" rx="2" fill="${OUT.browningColor(s.outcome.browning.surface)}" stroke="var(--border)" />` : '';
+          out += swatch + `<text class="so-strip-now so-k-${KIND[now.state]}" x="${x1 + (browning ? 22 : 8)}" y="${mid}" dy="0.35em">${STATE_TEXT[now.state]}</text>`;
+        }
+      });
+      const yReady = rowY(ROWS.length);
+      out += `<text class="so-strip-row" x="${x0 - 8}" y="${yReady + STRIP.readyH / 2}" dy="0.35em" text-anchor="end">Ready</text>`;
+      out += `<rect class="so-strip-track" x="${x0}" y="${yReady}" width="${x1 - x0}" height="${STRIP.readyH}" rx="2" />`;
+      for (const r of runs.ready) if (r.state === 'ready') out += `<rect class="so-seg-ready" x="${TF.sx(r.from).toFixed(1)}" y="${yReady}" width="${Math.max(2, TF.sx(r.to) - TF.sx(r.from)).toFixed(1)}" height="${STRIP.readyH}" rx="2" />`;
+      const readyNow = runs.ready.length && runs.ready[runs.ready.length - 1].state === 'ready';
+      if (readyNow && !TF.narrow()) out += `<text class="so-strip-now so-k-good" x="${x1 + 8}" y="${yReady + STRIP.readyH / 2}" dy="0.35em">aligned</text>`;
+      tq('.so-strip-defs').innerHTML = defs;
+      tq('.so-strips').innerHTML = out;
+    }
+
+    function renderThermalGraph(s) {
+      TF.layout(xSpanFor(s.time));
+      const x0 = TF.M.left, x1 = TF.W - TF.M.right, yBase = TF.sy(0);
+
+      // Center target band
+      const yTop = TF.sy(CENTER_TARGET.max), yBot = TF.sy(CENTER_TARGET.min);
+      const band = tq('.so-band rect');
+      band.setAttribute('x', x0); band.setAttribute('width', x1 - x0);
+      band.setAttribute('y', yTop); band.setAttribute('height', yBot - yTop);
+      const [e1, e2] = thermalSvg.querySelectorAll('.so-band line');
+      for (const [el, y] of [[e1, yTop], [e2, yBot]]) { el.setAttribute('x1', x0); el.setAttribute('x2', x1); el.setAttribute('y1', y); el.setAttribute('y2', y); }
+      const bandText = tq('.so-band text');
+      bandText.setAttribute('x', x0 - 8); bandText.setAttribute('y', (yTop + yBot) / 2);
+      bandText.textContent = 'target';
+      // Only when it clears the nearest tick label (the legend names the band either way)
+      bandText.style.display = Math.abs((yTop + yBot) / 2 - TF.sy(Math.round(CENTER_TARGET.min / 100) * 100)) < 16 ? 'none' : '';
+
+      // Food added marker
+      const added = tq('.so-added');
+      added.setAttribute('visibility', s.foodInPan ? 'visible' : 'hidden');
+      if (s.foodInPan) {
+        const xa = TF.sx(s.foodAddedAt), line = added.querySelector('line'), t = added.querySelector('text');
+        line.setAttribute('x1', xa); line.setAttribute('x2', xa); line.setAttribute('y1', TF.M.top); line.setAttribute('y2', TF.bottom());
+        const flip = xa > x1 - 90;
+        t.setAttribute('x', flip ? xa - 5 : xa + 5); t.setAttribute('y', TF.M.top + 10);
+        t.setAttribute('text-anchor', flip ? 'end' : 'start');
+        t.textContent = 'Food added';
+      }
+
+      // Curves
+      const now = { pan: s.panTemp, surface: s.surfaceTemp, center: s.centerTemp }, cx = TF.sx(s.time), ends = [];
+      for (const k of ['pan', 'surface', 'center']) {
+        const visible = k === 'pan' || s.foodInPan;
+        let d = '';
+        if (visible) {
+          const start = k === 'pan' ? '' : `M${TF.sx(s.foodAddedAt).toFixed(1)} ${TF.sy(s.foodStart[k]).toFixed(1)}`;
+          d = seriesPath(s, k, (t) => (k === 'pan' || t > s.foodAddedAt ? TF.sx(t) : null), TF.sy, start);
+          d += `${d ? 'L' : 'M'}${cx.toFixed(1)} ${TF.sy(now[k]).toFixed(1)}`;
+          ends.push({ k, y: TF.sy(now[k]) });
+        }
+        tq(`.so-c-${k}`).setAttribute('d', d);
+        const dot = tq(`.so-d-${k}`);
+        dot.setAttribute('visibility', visible ? 'visible' : 'hidden');
+        dot.setAttribute('cx', cx); dot.setAttribute('cy', TF.sy(now[k]));
+      }
+      ends.sort((a, b) => a.y - b.y);
+      for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 15);
+      const over = ends.length ? ends[ends.length - 1].y - (yBase - 4) : 0;
+      if (over > 0) ends.forEach((e) => (e.y -= over));
+      tq('.so-ends').innerHTML = ends.map((e) =>
+        `<text class="so-label so-strong" x="${(cx + 9).toFixed(1)}" y="${e.y.toFixed(1)}" dy="0.32em">${TF.narrow() ? '' : `${NAMES[e.k]} `}${fmtT(now[e.k])}</text>`).join('');
+      renderStrips(s);
+      const playhead = tq('.so-playhead');
+      playhead.setAttribute('visibility', s.time > 0 ? 'visible' : 'hidden');
+      playhead.setAttribute('x1', cx); playhead.setAttribute('x2', cx);
+      playhead.setAttribute('y1', TF.M.top); playhead.setAttribute('y2', TF.bottom());
+      thermalHover();
+    }
+    const thermalHover = attachHover(TF, thermalSvg, thermalTip, (px) => {
+      const s = state;
+      if (s.time === 0 || px < TF.M.left || px > TF.W - TF.M.right) return null;
+      const p = sampleAt(s, clamp(((px - TF.M.left) / TF.plotW()) * TF.xMax, 0, s.time));
+      const keys = ['pan', 'surface', 'center'];
+      let states = '';
+      if (p.brown !== null && p.brown !== undefined) {
+        const centerMax = Math.max(...s.history.center.filter((v, i) => v !== null && s.history.time[i] <= p.time), p.center);
+        states = `<br><b>Surface</b> ${STATE_TEXT[OUT.getBrowningLevelStatus(p.brown)]} · <b>Center</b> ${STATE_TEXT[OUT.getCenterStatus(centerMax)]}`;
+      }
+      return {
+        x: TF.sx(p.time), tipY: TF.sy(p.pan),
+        dots: keys.filter((k) => p[k] !== null).map((k) => ({ y: TF.sy(p[k]), color: `var(--so-${k})` })),
+        html: `<b>${fmtClock(p.time)} elapsed</b><br>` + keys.map((k) =>
+          `<i style="background: var(--so-${k})"></i>${NAMES[k]}: ${p[k] === null ? 'not in pan' : fmtT(p[k])}`).join('<br>') + states,
+      };
+    });
+
+    // -- Status
+    const ICONS = {
+      good: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6" /><path d="M4.8 8.3 L7 10.4 L11.2 5.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>',
+      bad: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6" /><path d="M5.5 5.5 L10.5 10.5 M10.5 5.5 L5.5 10.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>',
+      wait: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.5 2" /></svg>',
+      none: '<svg viewBox="0 0 16 16"><path d="M4 8 H12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>',
+    };
+    const KIND = { under: 'wait', good: 'good', burnt: 'bad', underdone: 'wait', target: 'good', overdone: 'bad' };
+    const badge = (el, kind, text) => { el.dataset.state = kind; el.innerHTML = `${ICONS[kind]}${text}`; };
+    const bSurface = $('.so-b-surface'), bCenter = $('.so-b-center'), dSurface = $('.so-d-surface'), dCenter = $('.so-d-center');
+    const verdict = $('.so-verdict'), cooktime = $('.so-cooktime');
+    const windowText = (w) => `${fmtClock(w.from)} to ${fmtClock(w.to)}`;
+
+    function renderStatus(s) {
+      const o = s.outcome, cook = cookingTime(s);
+      cooktime.textContent = s.foodInPan ? `Cooking time ${fmtClock(cook)}` : 'Food not in the pan yet';
+      if (!s.foodInPan) {
+        badge(bSurface, 'none', '—'); badge(bCenter, 'none', '—');
+        dSurface.textContent = fmtT(s.surfaceTemp); dCenter.textContent = fmtT(s.centerTemp);
+        verdict.className = 'so-verdict';
+        verdict.innerHTML = '<b>Not cooking yet</b>Add the food to start the cooking clock.';
+        return;
+      }
+      badge(bSurface, KIND[o.surface], OUT.LABELS.surface[o.surface]);
+      badge(bCenter, KIND[o.center], OUT.LABELS.center[o.center]);
+      dSurface.textContent = o.surface === 'burnt' ? `burnt at ${fmtClock(o.burntAt.surface)}` : fmtT(s.surfaceTemp);
+      dCenter.textContent = `${fmtT(s.centerTemp)} · target ${CENTER_TARGET.min}–${CENTER_TARGET.max}°F`;
+
+      let title, body;
+      const ever = o.windows.length > 0, last = o.windows[o.windows.length - 1];
+      if (o.aligned) { title = 'Targets aligned'; body = 'The surface is browned and the center is on target at the same time.'; }
+      else if (ever) { title = 'Targets were aligned'; body = `From ${windowText(last)} of cooking${o.windows.length > 1 ? ` (and ${o.windows.length - 1} other time${o.windows.length > 2 ? 's' : ''})` : ''}.`; }
+      else if (o.burntAt.surface !== null && (o.targetAt === null || o.burntAt.surface < o.targetAt)) { title = 'Targets missed'; body = 'The surface burnt before the center reached its target.'; }
+      else if (o.overdoneAt !== null && (o.goodAt.surface === null || o.overdoneAt < o.goodAt.surface)) { title = 'Targets missed'; body = 'The center passed its target before the surface browned.'; }
+      else if (o.surface === 'burnt' || o.center === 'overdone') { title = 'Targets missed'; body = 'The surface and center reached their targets at different times.'; }
+      else if (o.surface === 'good') { title = 'Not aligned yet'; body = 'The surface is browned; the center is still heating up.'; }
+      else if (o.center === 'target') { title = 'Not aligned yet'; body = 'The center is on target; the surface has not browned yet.'; }
+      else { title = 'Not aligned yet'; body = 'Both are still cooking.'; }
+      verdict.className = `so-verdict${o.aligned ? ' so-aligned' : ''}`;
+      verdict.innerHTML = `<b>${o.aligned ? ICONS.good : ''}${title}</b>${body}`;
+    }
+
+    // -- Controls display
+    const burnerName = $('.so-burner-name'), burnerDetail = $('.so-burner-detail');
+    const playBtn = $('.so-play'), addBtn = $('.so-add'), clock = $('.so-clock');
+    function renderControls(s) {
+      knob.render(s.burner);
+      burnerName.textContent = presetName(s.burner) || `${s.burner}%`;
+      burnerDetail.textContent = `${s.burner}% · ${fmtW(burnerWatts(s.burner))} heat input`;
+      root.querySelectorAll('.so-speed button').forEach((b) => b.setAttribute('aria-pressed', +b.dataset.v === s.speed));
+      playBtn.textContent = s.running ? '❚❚ Pause' : '▶ Play';
+      playBtn.setAttribute('aria-label', s.running ? 'Pause' : 'Play');
+      addBtn.disabled = s.foodInPan;
+      addBtn.textContent = s.foodInPan ? `Food added at ${fmtClock(s.foodAddedAt)}` : '+ Add food';
+      clock.textContent = `Elapsed: ${fmtClock(s.time)}`;
+    }
+
+    function render() {
+      scene.render(state);
+      renderStatus(state);
+      renderThermalGraph(state);
+      renderControls(state);
+    }
+
+    // ==== Controls: user input → state, plus the animation loop ===================
+    const live = $('.so-sr');
+    let announceTimer, lastAnnounced = '';
+    const announce = (msg) => { clearTimeout(announceTimer); announceTimer = setTimeout(() => (live.textContent = msg), 400); };
+
+    const speedGroup = $('.so-speed');
+    for (const v of SPEEDS) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = `${v}×`; b.dataset.v = v;
+      speedGroup.appendChild(b);
+    }
+    speedGroup.addEventListener('click', (e) => {
+      if (!e.target.dataset.v) return;
+      state.speed = +e.target.dataset.v;
+      render();
+    });
+
+    // Changing the burner changes heat input only; every temperature carries on from where it is
+    function setBurner(pct) {
+      state.burner = clamp(Math.round(pct), 0, 100);
+      render();
+      announce(`Burner ${state.burner}%.`);
+    }
+    const knob = window.StovetopKnob($('.so-knob'), { presets: PRESETS, onChange: setBurner });
+
+    let lastFrame = null, visible = true;
+    function frame(now) {
+      lastFrame = null;
+      if (!state.running || !visible) return;
+      if (frame.prev !== undefined) advance(Math.min((now - frame.prev) / 1000, 0.1) * state.speed);
+      frame.prev = now;
+      render();
+      // Announce status changes for screen readers
+      const o = state.outcome, msg = state.foodInPan ? `Surface ${OUT.LABELS.surface[o.surface]}, center ${OUT.LABELS.center[o.center]}${o.aligned ? ', targets aligned' : ''}.` : '';
+      if (msg !== lastAnnounced) { lastAnnounced = msg; if (msg) announce(msg); }
+      lastFrame = requestAnimationFrame(frame);
+    }
+    function startLoop() {
+      if (lastFrame !== null || !state.running || !visible) return;
+      frame.prev = undefined;
+      lastFrame = requestAnimationFrame(frame);
+    }
+
+    playBtn.addEventListener('click', () => {
+      state.running = !state.running;
+      render();
+      startLoop();
+      announce(state.running ? 'Playing' : 'Paused');
+    });
+    addBtn.addEventListener('click', () => {
+      if (!addFood(state)) return;
+      scene.carryIn();
+      render();
+      announce(`Food added at ${fmtClock(state.foodAddedAt)}.`);
+    });
+    $('.so-reset').addEventListener('click', () => {
+      scene.cancel();
+      resetSimulation();
+      lastAnnounced = '';
+      render();
+      announce('Reset: pan at room temperature, food back out of the pan');
+    });
+
+    // Pause the loop (not the simulation state) while the widget is scrolled out of view
+    new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; startLoop(); }).observe(root);
+    new ResizeObserver(() => { TF.W = 0; renderThermalGraph(state); }).observe($('.so-graphs'));
+
+    render();
+  })();
+</script>

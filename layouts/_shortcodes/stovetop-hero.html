@@ -1,0 +1,259 @@
+{{- /*
+  Intro animation for the stovetop post: the burner is turned on, the pan heats, a steak goes in and sears,
+  gets flipped, and is moved to a plate. Decorative, not a simulation. Plays once when scrolled into view,
+  then holds the last frame with a Replay button. With reduced motion it shows the finished frame.
+  Every frame is computed from the elapsed time (frameAt), so replaying and pausing need no extra state.
+  Usage in a post: {{< stovetop-hero >}}
+*/ -}}
+{{- $id := printf "sth%d" .Ordinal }}
+<style>
+  .sth-root {
+    --sth-flame: #2a78d6; --sth-flame-core: #a9cdf9;
+    --sth-steel-hi: #f3f4f6; --sth-steel-lo: #a4a9b1; --sth-steel-in: #c9cdd3; --sth-metal: #50555e;
+    --sth-warm: #d9822b;
+    --sth-raw: #c4525b; --sth-raw-edge: #a8434c; --sth-crust: #6e3b1f; --sth-fat: #f2e4cb;
+    --sth-wood: #c99a62; --sth-wood-edge: #a77c47; --sth-plate: #fbfbf9; --sth-plate-edge: #d6d6d1;
+    --sth-counter: #e7e3dc; --sth-stove: #3a3e45; --sth-knob: #23262b;
+    width: min(960px, 100vw - 2 * var(--gap));
+    margin: 0 0 var(--content-gap) 50%;
+    transform: translateX(-50%);
+    font-size: 14px; color: var(--primary);
+  }
+  :root[data-theme="dark"] .sth-root {
+    --sth-flame: #3987e5; --sth-flame-core: #b9d7fb;
+    --sth-steel-hi: #c9ccd2; --sth-steel-lo: #6b717b; --sth-steel-in: #8a9099; --sth-metal: #8a8f98;
+    --sth-raw: #b44a53; --sth-raw-edge: #933a42; --sth-crust: #5a3019;
+    --sth-wood: #a87d4b; --sth-wood-edge: #87633a; --sth-plate: #e9e9e5; --sth-plate-edge: #a9a9a4;
+    --sth-counter: #3a3b40; --sth-stove: #1f2125; --sth-knob: #9aa0a9;
+  }
+  .sth-root * { box-sizing: border-box; }
+  .sth-stage { position: relative; }
+  .sth-root svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .sth-flame { transform: scale(var(--sth-fx, 0), var(--sth-fy, 0)); }
+  .sth-flicker { animation: sth-flicker .55s ease-in-out infinite alternate; }
+  @keyframes sth-flicker { from { transform: scale(1, 1); } to { transform: scale(.9, .82); } }
+  .sth-wisp { fill: none; stroke: var(--secondary); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 9 6; animation: sth-rise 1.4s linear infinite; }
+  @keyframes sth-rise { from { stroke-dashoffset: 30; } to { stroke-dashoffset: 0; } }
+  .sth-steps { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 13.5px; color: var(--secondary); }
+  .sth-steps li { margin: 0; display: inline-flex; align-items: center; gap: 7px; }
+  .sth-steps li::before {
+    content: attr(data-n); display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+    font-size: 11px; font-weight: 700; border: 1.5px solid var(--tertiary); color: var(--secondary);
+  }
+  .sth-steps li.sth-done::before { border-color: var(--secondary); }
+  .sth-steps li.sth-now { color: var(--primary); font-weight: 600; }
+  .sth-steps li.sth-now::before { background: var(--primary); border-color: var(--primary); color: var(--theme); }
+  .sth-replay {
+    position: absolute; right: 0; top: 0; font: inherit; font-size: 13px; padding: 5px 12px; cursor: pointer;
+    color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary); border-radius: 999px;
+    visibility: hidden;
+  }
+  .sth-replay.sth-show { visibility: visible; }
+  .sth-replay:focus-visible { outline: 2px solid var(--sth-flame); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .sth-flicker, .sth-wisp { animation: none; } }
+</style>
+
+<div class="sth-root">
+  <div class="sth-stage">
+    <svg viewBox="0 72 720 198" role="img" aria-label="Animation: a gas burner is turned on, a pan heats up, a steak is seared on one side, flipped, seared on the other side, and moved to a plate.">
+      <defs>
+        <linearGradient id="{{ $id }}-steel" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="var(--sth-steel-lo)" /><stop offset=".35" stop-color="var(--sth-steel-hi)" /><stop offset="1" stop-color="var(--sth-steel-lo)" />
+        </linearGradient>
+        <linearGradient id="{{ $id }}-inside" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="var(--sth-steel-lo)" /><stop offset="1" stop-color="var(--sth-steel-in)" />
+        </linearGradient>
+        <linearGradient id="{{ $id }}-fade" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fff" stop-opacity="0" /><stop offset="1" stop-color="#fff" stop-opacity="1" />
+        </linearGradient>
+        <mask id="{{ $id }}-wispfade" maskContentUnits="userSpaceOnUse"><rect x="0" y="40" width="720" height="150" fill="url(#{{ $id }}-fade)" /></mask>
+        <!-- the steak's two faces: top band and bottom band of the slab -->
+        <clipPath id="{{ $id }}-top"><rect x="-80" y="-30" width="160" height="21" /></clipPath>
+        <clipPath id="{{ $id }}-bot"><rect x="-80" y="9" width="160" height="21" /></clipPath>
+      </defs>
+
+      <!-- counter and stove -->
+      <rect x="0" y="210" width="720" height="60" fill="var(--sth-counter)" />
+      <rect x="0" y="208" width="720" height="4" fill="var(--border)" />
+      <rect x="236" y="210" width="248" height="60" rx="4" fill="var(--sth-stove)" />
+      <rect x="236" y="206" width="248" height="6" rx="2" fill="var(--sth-metal)" />
+      <!-- the knob on the stove's front panel; turns when the burner comes on -->
+      <g transform="translate(300 240)">
+        <circle r="15" fill="var(--sth-metal)" opacity=".5" />
+        <g class="sth-knob">
+          <circle r="11" fill="var(--sth-knob)" stroke="var(--sth-metal)" />
+          <rect x="-2.5" y="-11" width="5" height="22" rx="2.5" fill="var(--sth-metal)" />
+          <line x1="0" y1="-9" x2="0" y2="-4" stroke="#fff" stroke-width="2" stroke-linecap="round" />
+        </g>
+      </g>
+      <circle class="sth-lamp" cx="330" cy="240" r="3" fill="var(--sth-warm)" opacity="0" />
+
+      <!-- grate and burner -->
+      <rect x="262" y="184" width="196" height="4" rx="2" fill="var(--sth-metal)" opacity=".6" />
+      <rect x="266" y="184" width="5" height="22" fill="var(--sth-metal)" opacity=".6" />
+      <rect x="449" y="184" width="5" height="22" fill="var(--sth-metal)" opacity=".6" />
+      <rect x="318" y="198" width="84" height="7" rx="2" fill="var(--sth-metal)" />
+      <g class="sth-flames"></g>
+
+      <!-- left to right: cutting board (raw), stove (cook), plate -->
+      <rect x="22" y="200" width="150" height="9" rx="3" fill="var(--sth-wood)" stroke="var(--sth-wood-edge)" />
+      <ellipse cx="622" cy="206" rx="54" ry="5" fill="var(--sth-plate-edge)" />
+      <path d="M540 198 Q622 214 704 198 L698 204 Q622 216 546 204 Z" fill="var(--sth-plate-edge)" />
+      <ellipse cx="622" cy="198" rx="82" ry="10" fill="var(--sth-plate)" stroke="var(--sth-plate-edge)" />
+      <ellipse cx="622" cy="198" rx="58" ry="6" fill="none" stroke="var(--sth-plate-edge)" opacity=".7" />
+
+      <!-- pan: back (interior) first, the steak can sit in front of it -->
+      <line x1="452" y1="171" x2="540" y2="160" stroke="var(--sth-steel-lo)" stroke-width="8" stroke-linecap="round" />
+      <circle cx="532" cy="161" r="2.4" fill="var(--entry)" />
+      <ellipse cx="360" cy="168" rx="92" ry="9" fill="url(#{{ $id }}-inside)" stroke="var(--sth-steel-lo)" />
+      <path class="sth-shimmer" d="M320 150 q-5 -6 0 -12 t0 -12 t0 -12 M360 150 q-5 -6 0 -12 t0 -12 t0 -12 M400 150 q-5 -6 0 -12 t0 -12 t0 -12"
+            fill="none" stroke="var(--secondary)" stroke-width="1.6" stroke-linecap="round" opacity="0" />
+
+      <!-- steams and sizzles: above the pan while searing, above the plate at the end -->
+      <g class="sth-sizzle" mask="url(#{{ $id }}-wispfade)" opacity="0">
+        <path class="sth-wisp" d="M320 150 q-6 -8 0 -16 t0 -16 t0 -16" />
+        <path class="sth-wisp" d="M360 146 q-6 -8 0 -16 t0 -16 t0 -16 t0 -16" style="animation-delay: -.5s" />
+        <path class="sth-wisp" d="M400 150 q-6 -8 0 -16 t0 -16 t0 -16" style="animation-delay: -.9s" />
+      </g>
+      <g class="sth-steam" mask="url(#{{ $id }}-wispfade)" opacity="0">
+        <path class="sth-wisp" d="M602 160 q-6 -8 0 -16 t0 -16 t0 -16" style="animation-duration: 2.2s" />
+        <path class="sth-wisp" d="M642 160 q-6 -8 0 -16 t0 -16 t0 -16" style="animation-duration: 2.2s; animation-delay: -1s" />
+      </g>
+
+      <!-- the steak: a slab seen from the side, fat cap on the right; each face gets its own crust -->
+      <g class="sth-steak">
+        <g class="sth-steak-body">
+          <path d="M-62 -14 C-40 -19 -10 -15 10 -17 C35 -19 52 -17 60 -12 C66 -7 66 7 60 12 C52 17 35 19 10 17 C-10 15 -40 19 -62 14 C-68 10 -68 -10 -62 -14 Z"
+                fill="var(--sth-raw)" stroke="var(--sth-raw-edge)" stroke-width="1.5" />
+          <path d="M48 -16 C56 -15 62 -12 64 -7 C67 -2 67 2 64 7 C62 12 56 15 48 16 C53 8 53 -8 48 -16 Z" fill="var(--sth-fat)" />
+          <g fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="1.4" stroke-linecap="round">
+            <path d="M-44 -4 q6 -3 12 0 t10 1" /><path d="M-10 5 q5 2 10 0" /><path d="M14 -6 q6 2 12 0 t8 2" />
+          </g>
+          <!-- crusts: face A starts on the bottom (on the pan), face B on top -->
+          <path class="sth-crust-a" clip-path="url(#{{ $id }}-bot)" opacity="0"
+                d="M-62 -14 C-40 -19 -10 -15 10 -17 C35 -19 52 -17 60 -12 C66 -7 66 7 60 12 C52 17 35 19 10 17 C-10 15 -40 19 -62 14 C-68 10 -68 -10 -62 -14 Z" fill="var(--sth-crust)" />
+          <path class="sth-crust-b" clip-path="url(#{{ $id }}-top)" opacity="0"
+                d="M-62 -14 C-40 -19 -10 -15 10 -17 C35 -19 52 -17 60 -12 C66 -7 66 7 60 12 C52 17 35 19 10 17 C-10 15 -40 19 -62 14 C-68 10 -68 -10 -62 -14 Z" fill="var(--sth-crust)" />
+        </g>
+      </g>
+
+      <!-- pan front wall, drawn over the steak so it sits inside the pan; then the heat tint -->
+      <path d="M268 168 L280 186 L440 186 L452 168 A92 9 0 0 1 268 168 Z" fill="url(#{{ $id }}-steel)" stroke="var(--sth-steel-lo)" />
+      <path class="sth-tint" d="M268 168 L280 186 L440 186 L452 168 A92 9 0 0 1 268 168 Z" fill="var(--sth-warm)" opacity="0" />
+    </svg>
+    <button type="button" class="sth-replay">↻ Replay</button>
+  </div>
+  <ol class="sth-steps">
+    <li data-n="1">Turn on the burner</li>
+    <li data-n="2">Heat the pan</li>
+    <li data-n="3">Add the steak</li>
+    <li data-n="4">Flip</li>
+    <li data-n="5">Plate</li>
+  </ol>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const $ = (sel) => root.querySelector(sel);
+    const clamp01 = (x) => Math.min(1, Math.max(0, x));
+    const seg = (t, a, b) => clamp01((t - a) / (b - a));       // 0 → 1 as t goes a → b
+    const ease = (u) => u * u * (3 - 2 * u);                    // smoothstep
+    const lerp = (a, b, u) => a + (b - a) * u;
+
+    // ---- Timeline (seconds) ------------------------------------------------------
+    const T = {
+      knobOn: [1.0, 1.6], flamesOn: [1.3, 1.9], heat: [1.8, 4.4],
+      toPan: [4.4, 5.6], searA: [5.6, 7.9], flip: [7.9, 8.6], searB: [8.7, 10.9],
+      knobOff: [10.9, 11.4], toPlate: [11.2, 12.4], end: 13.2,
+    };
+    const STEPS = [1.9, 4.4, 7.9, 11.2]; // step n starts at STEPS[n - 1]
+    const BOARD = [97, 183], PAN = [360, 168], PLATE = [622, 180]; // left to right: raw → cook → plate
+
+    // Everything visible at time t (pure: no DOM, no state)
+    function frameAt(t) {
+      const knob = 225 * (ease(seg(t, ...T.knobOn)) - ease(seg(t, ...T.knobOff)));
+      const flames = ease(seg(t, ...T.flamesOn)) * (1 - ease(seg(t, T.knobOff[0], T.knobOff[1] + 0.2)));
+      // the pan warms up, dips a little when the cold steak goes in, and cools once the burner is off
+      const heat = ease(seg(t, ...T.heat)) - 0.2 * Math.sin(Math.PI * seg(t, T.toPan[1], T.toPan[1] + 2)) - 0.5 * ease(seg(t, T.knobOff[0], T.end));
+      let pos, lift = 0, flipScale = 1;
+      if (t < T.toPan[0]) pos = BOARD;
+      else if (t < T.toPan[1]) { const u = ease(seg(t, ...T.toPan)); pos = [lerp(BOARD[0], PAN[0], u), lerp(BOARD[1], PAN[1], u)]; lift = 70 * Math.sin(Math.PI * u); }
+      else if (t < T.toPlate[0]) {
+        pos = PAN;
+        const u = seg(t, ...T.flip);
+        lift = 46 * Math.sin(Math.PI * u);
+        flipScale = Math.cos(Math.PI * ease(u)); // 1 → −1: turned over top to bottom, fat cap stays on the right
+      } else { const u = ease(seg(t, ...T.toPlate)); pos = [lerp(PAN[0], PLATE[0], u), lerp(PAN[1], PLATE[1], u)]; lift = 80 * Math.sin(Math.PI * u); flipScale = -1; }
+      if (t >= T.flip[1]) flipScale = -1;
+      const inPan = t >= T.toPan[1] && t < T.toPlate[0];
+      return {
+        knob, flames, heat: clamp01(heat),
+        shimmer: inPan ? 0 : clamp01(heat) * (t < T.toPlate[0] ? 1 : 0.4),
+        steak: { x: pos[0], y: pos[1] - lift, flipScale },
+        crustA: 0.9 * ease(seg(t, ...T.searA)), crustB: 0.9 * ease(seg(t, ...T.searB)),
+        sizzle: inPan ? Math.min(seg(t, T.toPan[1], T.toPan[1] + 0.4), 1 - seg(t, T.toPlate[0] - 0.3, T.toPlate[0])) * (1 - 0.6 * seg(t, ...T.knobOff)) : 0,
+        steam: seg(t, T.toPlate[1], T.toPlate[1] + 0.8),
+        step: STEPS.filter((s) => t >= s).length,
+        done: t >= T.end,
+      };
+    }
+
+    // ---- Rendering ---------------------------------------------------------------
+    const svg = $('svg');
+    const flamesG = $('.sth-flames');
+    flamesG.innerHTML = Array.from({ length: 8 }, (_, i) =>
+      `<g transform="translate(${324 + i * 10.3} 198) rotate(${(i - 3.5) * 3})"><g class="sth-flame">` +
+      `<g class="sth-flicker" style="animation-duration:${(0.45 + ((i * 37) % 23) / 100).toFixed(2)}s;animation-delay:-${((i * 0.13) % 0.5).toFixed(2)}s">` +
+      '<path d="M-4.5 0 C-5 -5 -1.4 -10.5 0 -16 C1.4 -10.5 5 -5 4.5 0 Z" fill="var(--sth-flame)" opacity=".85" />' +
+      '<path d="M-2.2 0 C-2.5 -2.5 -0.7 -5 0 -7.5 C0.7 -5 2.5 -2.5 2.2 0 Z" fill="var(--sth-flame-core)" />' +
+      '</g></g></g>').join('');
+    const knob = $('.sth-knob'), lamp = $('.sth-lamp'), tint = $('.sth-tint'), shimmer = $('.sth-shimmer');
+    const steak = $('.sth-steak'), body = $('.sth-steak-body'), crustA = $('.sth-crust-a'), crustB = $('.sth-crust-b');
+    const sizzle = $('.sth-sizzle'), steam = $('.sth-steam'), replay = $('.sth-replay');
+    const steps = root.querySelectorAll('.sth-steps li');
+
+    function render(f) {
+      knob.setAttribute('transform', `rotate(${f.knob.toFixed(1)})`);
+      lamp.setAttribute('opacity', (f.flames > 0.05 ? 1 : 0).toString());
+      svg.style.setProperty('--sth-fx', f.flames ? (0.7 + 0.3 * f.flames).toFixed(3) : 0);
+      svg.style.setProperty('--sth-fy', f.flames.toFixed(3));
+      tint.setAttribute('opacity', (0.32 * f.heat).toFixed(3));
+      shimmer.setAttribute('opacity', (0.5 * f.shimmer).toFixed(3));
+      steak.setAttribute('transform', `translate(${f.steak.x.toFixed(1)} ${f.steak.y.toFixed(1)})`);
+      body.setAttribute('transform', `scale(1 ${f.steak.flipScale.toFixed(3)})`);
+      crustA.setAttribute('opacity', f.crustA.toFixed(3));
+      crustB.setAttribute('opacity', f.crustB.toFixed(3));
+      sizzle.setAttribute('opacity', f.sizzle.toFixed(3));
+      steam.setAttribute('opacity', (0.8 * f.steam).toFixed(3));
+      steps.forEach((li, i) => {
+        li.classList.toggle('sth-now', i === f.step && !f.done);
+        li.classList.toggle('sth-done', i < f.step || f.done);
+      });
+      replay.classList.toggle('sth-show', f.done);
+    }
+
+    // ---- Playback ----------------------------------------------------------------
+    let start = null, raf = null;
+    function tick(now) {
+      if (start === null) start = now;
+      const t = (now - start) / 1000;
+      render(frameAt(t));
+      raf = t < T.end ? requestAnimationFrame(tick) : null;
+    }
+    function play() {
+      if (raf !== null) cancelAnimationFrame(raf);
+      start = null;
+      raf = requestAnimationFrame(tick);
+    }
+    replay.addEventListener('click', play);
+
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    render(frameAt(reduced ? T.end : 0));
+    if (!reduced) {
+      // Start once, when most of it is on screen
+      const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { io.disconnect(); play(); } }, { threshold: 0.6 });
+      io.observe(root);
+    }
+  })();
+</script>

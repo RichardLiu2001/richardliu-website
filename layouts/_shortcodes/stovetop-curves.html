@@ -1,0 +1,182 @@
+{{- /*
+  Static graph: pan temperature over the first 10 minutes at Low, Medium and High, each with the
+  dashed equilibrium line it approaches. Curves come from the same model as stovetop-heating.html
+  (assets/js/stovetop-model.js). Hover or tap to read all three temperatures at a moment.
+  Usage in a post: {{< stovetop-curves >}}
+*/ -}}
+<style>
+  .sc-root {
+    /* One-hue ramp, light → dark = Low → High (validated vs the light surface) */
+    --sc-low: #f0975a;
+    --sc-medium: #d9561a;
+    --sc-high: #9a3412;
+    margin: 0 0 var(--content-gap);
+    padding: 14px 14px 10px;
+    font-size: 14px; line-height: 1.4; color: var(--primary);
+    background: var(--entry); border: 1px solid var(--border); border-radius: 12px;
+    position: relative;
+  }
+  /* On the dark surface the ramp runs dim → bright, so High stays the most intense */
+  :root[data-theme="dark"] .sc-root {
+    --sc-low: #a8481a;
+    --sc-medium: #e2621b;
+    --sc-high: #f7a36b;
+  }
+  .sc-root * { box-sizing: border-box; }
+  .sc-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 6px; padding: 0; list-style: none; font-size: 13px; color: var(--secondary); }
+  .sc-legend li { margin: 0; display: inline-flex; align-items: center; gap: 6px; }
+  .sc-legend svg { display: block; }
+  .sc-root svg.sc-chart { display: block; width: 100%; overflow: visible; touch-action: pan-y; }
+  .sc-root text { font-family: inherit; font-variant-numeric: tabular-nums; }
+  .sc-grid line { stroke: var(--border); }
+  .sc-axis text { fill: var(--secondary); font-size: 12px; }
+  .sc-axis .sc-baseline { stroke: var(--tertiary); }
+  .sc-room line { stroke: var(--secondary); stroke-dasharray: 1 4; stroke-linecap: round; }
+  .sc-eq { stroke-width: 1.5; stroke-dasharray: 6 5; }
+  .sc-curve { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .sc-label { font-size: 12px; paint-order: stroke; stroke: var(--entry); stroke-width: 4px; stroke-linejoin: round; }
+  .sc-label.sc-eq-label { fill: var(--primary); font-weight: 600; }
+  .sc-label.sc-room-label { fill: var(--secondary); }
+  .sc-hover line { stroke: var(--tertiary); }
+  .sc-hover circle { fill: var(--entry); stroke-width: 2; }
+  .sc-tip {
+    position: absolute; pointer-events: none; transform: translate(-50%, calc(-100% - 12px));
+    padding: 5px 9px; border-radius: 6px; font-size: 12px; line-height: 1.45; white-space: nowrap;
+    font-variant-numeric: tabular-nums; color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary);
+  }
+  .sc-tip b { font-weight: 600; }
+  .sc-tip i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+</style>
+
+{{- $modelJS := resources.Get "js/stovetop-model.js" | minify | fingerprint }}
+<script src="{{ $modelJS.RelPermalink }}" integrity="{{ $modelJS.Data.Integrity }}"></script>
+
+<div class="sc-root">
+  <ul class="sc-legend"></ul>
+  <svg class="sc-chart" role="img"
+       aria-label="Pan temperature over 10 minutes. Low settles near 272°F, Medium near 424°F, High near 575°F. Each curve rises fastest at first and levels off at its dashed equilibrium line.">
+    <g class="sc-grid"></g>
+    <g class="sc-axis"></g>
+    <g class="sc-room"><line /></g>
+    <g class="sc-eqs"></g>
+    <g class="sc-curves"></g>
+    <g class="sc-labels"></g>
+    <g class="sc-hover" visibility="hidden"><line /></g>
+  </svg>
+  <div class="sc-tip" hidden></div>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const $ = (sel) => root.querySelector(sel);
+    const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    const { MODEL, PRESETS, burnerWatts, equilibriumTemp, simulate } = window.StovetopModel;
+
+    // ---- Data: one 10-minute run per setting, sampled every simulated second
+    const SPAN = 600, Y_MAX = 650;
+    const SERIES = PRESETS.filter(([, v]) => v > 0).map(([name, pct]) => ({
+      name, pct, color: `var(--sc-${name.toLowerCase()})`,
+      eq: equilibriumTemp(pct), run: simulate(pct, SPAN, 1),
+    }));
+    const TOP_DOWN = [...SERIES].reverse(); // High first, matching the order on the graph
+
+    // ---- Legend
+    $('.sc-legend').innerHTML = TOP_DOWN.map((s) =>
+      `<li><svg width="18" height="6"><line x1="1" y1="3" x2="17" y2="3" stroke="${s.color}" stroke-width="3" stroke-linecap="round" /></svg>${s.name} (${s.pct}%, ${burnerWatts(s.pct).toLocaleString('en-US')} W)</li>`
+    ).join('') + '<li>Solid: pan temperature · dashed: equilibrium</li>';
+
+    // ---- Chart
+    const svg = $('.sc-chart'), tip = $('.sc-tip');
+    const hoverG = $('.sc-hover'), hoverLine = $('.sc-hover line');
+    const M = { top: 10, right: 12, bottom: 40, left: 50 };
+    let W = 0, H = 0, hoverPx = null;
+    const plotW = () => W - M.left - M.right;
+    const plotH = () => H - M.top - M.bottom;
+    const sx = (t) => M.left + (t / SPAN) * plotW();
+    const sy = (temp) => M.top + (1 - temp / Y_MAX) * plotH();
+    const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+
+    const hoverDots = SERIES.map((s) => {
+      const c = document.createElementNS(SVGNS, 'circle');
+      c.setAttribute('r', 4); c.setAttribute('stroke', s.color);
+      hoverG.appendChild(c);
+      return c;
+    });
+
+    function draw() {
+      W = svg.clientWidth;
+      H = Math.round(clamp(W * 0.6, 260, 380));
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.style.height = `${H}px`;
+      const x0 = M.left, x1 = W - M.right, yBase = sy(0);
+
+      let grid = '', axis = '';
+      for (let temp = 0; temp <= 600; temp += 100) {
+        const y = sy(temp).toFixed(1);
+        if (temp) grid += `<line x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" />`;
+        axis += `<text x="${x0 - 8}" y="${y}" dy="0.32em" text-anchor="end">${temp}°F</text>`;
+      }
+      const step = plotW() / 10 >= 36 ? 1 : 2;
+      for (let m = 0; m <= 10; m += step) {
+        axis += `<text x="${sx(m * 60).toFixed(1)}" y="${yBase + 18}" text-anchor="middle">${m}</text>`;
+      }
+      axis += `<line class="sc-baseline" x1="${x0}" x2="${x1}" y1="${yBase}" y2="${yBase}" />`;
+      axis += `<text x="${(x0 + x1) / 2}" y="${H - 4}" text-anchor="middle">Elapsed time (minutes)</text>`;
+      $('.sc-grid').innerHTML = grid;
+      $('.sc-axis').innerHTML = axis;
+
+      const yRoom = sy(MODEL.roomTemp).toFixed(1);
+      const room = $('.sc-room line');
+      room.setAttribute('x1', x0); room.setAttribute('x2', x1);
+      room.setAttribute('y1', yRoom); room.setAttribute('y2', yRoom);
+
+      let eqs = '', curves = '', labels = '';
+      for (const s of SERIES) {
+        const yEq = sy(s.eq).toFixed(1);
+        eqs += `<line class="sc-eq" x1="${x0}" x2="${x1}" y1="${yEq}" y2="${yEq}" stroke="${s.color}" />`;
+        const d = s.run.map((p, i) => `${i ? 'L' : 'M'}${sx(p.time).toFixed(1)} ${sy(p.temp).toFixed(1)}`).join('');
+        curves += `<path class="sc-curve" d="${d}" stroke="${s.color}" />`;
+        labels += `<text class="sc-label sc-eq-label" x="${x1 - 4}" y="${yEq - 7}" text-anchor="end">${s.name} equilibrium: ${Math.round(s.eq)}°F</text>`;
+      }
+      labels += `<text class="sc-label sc-room-label" x="${x1 - 4}" y="${+yRoom + 15}" text-anchor="end">Room temperature: ${MODEL.roomTemp}°F</text>`;
+      $('.sc-eqs').innerHTML = eqs;
+      $('.sc-curves').innerHTML = curves;
+      $('.sc-labels').innerHTML = labels;
+      renderHover();
+    }
+
+    // Crosshair + tooltip with all three temperatures at the hovered moment
+    function renderHover() {
+      if (hoverPx === null || hoverPx < M.left || hoverPx > W - M.right) {
+        hoverG.setAttribute('visibility', 'hidden');
+        tip.hidden = true;
+        return;
+      }
+      const i = Math.round(clamp((hoverPx - M.left) / plotW(), 0, 1) * SPAN); // samples are 1 s apart
+      const x = sx(i);
+      hoverLine.setAttribute('x1', x); hoverLine.setAttribute('x2', x);
+      hoverLine.setAttribute('y1', M.top); hoverLine.setAttribute('y2', sy(0));
+      SERIES.forEach((s, k) => { hoverDots[k].setAttribute('cx', x); hoverDots[k].setAttribute('cy', sy(s.run[i].temp)); });
+      hoverG.setAttribute('visibility', 'visible');
+      tip.innerHTML = `<b>${fmtClock(i)} elapsed</b><br>` + TOP_DOWN.map((s) =>
+        `<i style="background:${s.color}"></i>${s.name}: ${Math.round(s.run[i].temp)}°F`).join('<br>');
+      tip.hidden = false;
+      const box = svg.getBoundingClientRect(), panel = root.getBoundingClientRect();
+      const half = tip.offsetWidth / 2 + 4;
+      tip.style.left = `${clamp(box.left - panel.left + x, half, panel.width - half)}px`;
+      const yTop = box.top - panel.top + sy(SERIES[SERIES.length - 1].run[i].temp);
+      tip.style.top = `${Math.max(yTop, tip.offsetHeight + 16)}px`;
+    }
+
+    const setHover = (e) => { hoverPx = e.clientX - svg.getBoundingClientRect().left; renderHover(); };
+    svg.addEventListener('pointermove', setHover);
+    svg.addEventListener('pointerdown', setHover);
+    svg.addEventListener('pointerleave', () => { hoverPx = null; renderHover(); });
+
+    let lastW = 0;
+    new ResizeObserver(() => { if (svg.clientWidth !== lastW) { lastW = svg.clientWidth; draw(); } }).observe(root);
+    draw();
+  })();
+</script>

@@ -105,3 +105,124 @@
         display: none !important;
     }
 }
+
+/* ---- Figures (layouts/_shortcodes/fig.html) ----------------------------------------------
+   Each figure sits on a tinted band, slightly wider than the widest diagram, so it's clear where
+   the text stops and the figure starts. The band is a background pseudo-element, so diagrams keep
+   their own widths and breakouts. The caption sits on top so readers see how to use it first. */
+:root {
+    --fig-bg: rgb(245, 245, 243);
+    --fig-accent: #2563eb;
+}
+
+:root[data-theme="dark"] {
+    --fig-bg: rgb(38, 39, 43);
+    --fig-accent: #60a5fa;
+}
+
+.post-content {
+    counter-reset: fig;
+}
+
+.post-content .fig {
+    counter-increment: fig;
+    position: relative;
+    isolation: isolate;
+    margin: 44px 0;
+    padding: 22px 0 4px;
+}
+
+.post-content .fig::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: min(var(--wide-width) + 48px, 100vw);
+    transform: translateX(-50%);
+    background: var(--fig-bg);
+    border-radius: 12px;
+}
+
+.post-content .fig-cap {
+    display: block;
+    margin: 0 0 18px;
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1.5;
+    text-align: left;
+    color: var(--secondary);
+}
+
+.post-content .fig-cap > span:not(.fig-eyebrow) {
+    display: block;
+}
+
+.post-content .fig-cap p {
+    display: inline;
+    margin: 0;
+}
+
+.post-content .fig-eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.post-content .fig-num::before {
+    content: "Figure " counter(fig);
+}
+
+.post-content .fig-kind {
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1.5px solid currentColor;
+    font-size: 10.5px;
+    color: var(--fig-accent);
+}
+
+.post-content .fig-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.post-content .fig-text {
+    margin-top: 2px;
+}
+
+.post-content .fig-how {
+    margin-top: 6px;
+    color: var(--primary);
+}
+
+.post-content .fig-how-label {
+    margin-right: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fig-accent);
+}
+
+/* Image figures (Markdown body): center the images, stacked if there are several */
+.post-content .fig > p img {
+    display: block;
+    margin: 0 auto 12px;
+}
+
+/* Phones: the band runs edge to edge; diagrams already sit inside the page gutter */
+@media (max-width: 600px) {
+    .post-content .fig::before {
+        border-radius: 0;
+    }
+    .post-content .fig-title {
+        font-size: 17px;
+    }
+}

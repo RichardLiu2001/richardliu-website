@@ -3,9 +3,13 @@ date = '2026-09-26T18:49:33-04:00'
 draft = false
 title = 'Baseball I: Game Flow'
 +++
-Have you ever watched baseball, looked at the scoreboard, and asked yourself "what the fuck is this bullshit?"
+Have you ever watched baseball, looked at the scoreboard, and asked yourself "what the fuck is this bullshit?" Why are there so many numbers?
+
+{{< fig title="Baseball scoreboards"
+    caption="Two real scoreboards. Every number on them is part of the game state this post builds up." >}}
 ![scoreboard](https://preview.redd.it/what-does-the-stuff-in-the-scoreboard-mean-v0-vujgcs8j7lrc1.jpeg?auto=webp&s=d701ec7c4416a200c3a207cfa169746a6b5a4a9d)
 ![scoreboard](https://keepthescore.com/static/images/blog_images/baseball-scoreboard-detailed.jpg)
+{{< /fig >}}
 
 The reason why baseball seems complicated is . Today I will explain.
 
@@ -32,14 +36,17 @@ def baseball():
     for inning in range(1, 10):
         away_team_runs += half_inning(batting_team="AWAY")
         if inning == 9 and home_team_runs > away_team_runs:
-            return "HOME_TEAM_WINS" # bottom of the 9th is skipped if the home team already leads.
+            return "HOME_TEAM_WINS" # bottom 9th skipped if home team already leads.
         home_team_runs += half_inning(batting_team="HOME")
     while home_team_runs == away_team_runs: # extra innings
         away_team_runs += half_inning(batting_team="AWAY")
         home_team_runs += half_inning(batting_team="HOME")
     return "HOME_TEAM_WINS" if home_team_runs > away_team_runs else "AWAY_TEAM_WINS"
 ```
+
+{{< fig title="The game state machine" >}}
 {{< baseball-level level="game" >}}
+{{< /fig >}}
 
 ### 1b. The Half-Inning State Machine
 Let's define:
@@ -56,7 +63,10 @@ def half_inning(batting_team):
         runs += runs_scored
     return runs
 ```
+
+{{< fig title="The half-inning state machine" >}}
 {{< baseball-level level="half" >}}
+{{< /fig >}}
 
 ### 1c. The Plate Appearance State Machine
 Let's define:
@@ -76,14 +86,31 @@ Let's define:
 **Base on Balls (Walk)**: 4 balls are reached. Results in the batter advancing.
 **Hit By Pitch**: pitch hits the batter's body. Results in the batter advancing.
 
-
+{{< fig title="The plate-appearance state machine" >}}
 {{< baseball-level level="pa" >}}
+{{< /fig >}}
 
 ### The State Machine
+
+{{< fig title="The whole game, as nested state machines" kind="interactive"
+    caption="The three machines above, nested: each box with a blue border contains its own state machine."
+    how="Click a box with a blue border to expand it, or press **Expand all**." >}}
 {{< baseball-statechart >}}
+{{< /fig >}}
+
+{{< fig title="Two scoreboards, one game state" kind="animation"
+    caption="The TV score bug and the field scoreboard show the same state, laid out differently."
+    how="It plays when you scroll to it. **Pause** or **Replay** at any time." >}}
 {{< scoreboard-sync >}}
+{{< /fig >}}
+
 ### Try It
+
+{{< fig title="The game-state odometer" kind="interactive"
+    caption="Each wheel rolls over into the next, like an odometer: count → outs → half inning → inning → game over."
+    how="Add balls, strikes, outs and runs. **New game** resets." >}}
 {{< count-simulator >}}
+{{< /fig >}}
 
 ### Code
 ```python

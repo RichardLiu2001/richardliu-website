@@ -3,6 +3,11 @@ date = '2026-09-26T18:49:03-04:00'
 draft = false
 title = 'Clothing Fabrics'
 +++
+{{< fig title="From cotton plant to shirt" kind="animation"
+    caption="Plant → fibers → yarn → woven fabric → shirt."
+    how="It plays when you scroll to it. Click a step to jump to it, or use **Pause** and **Replay**." >}}
+{{< cotton-to-shirt >}}
+{{< /fig >}}
 Do you prefer silk or satin? 
 
 The correct response is actually, "that question is bullshit."
@@ -16,8 +21,6 @@ First we need to understand how clothes are made. There are three steps:
 1. **Create sheets**: obtain or manufacture 2D planes of material.
 2. **Apply finishes**: post-process the sheets to change their appearance, feel, and/or performance.
 3. **Assemble garment**: cut, combine, and/or assemble those sheets into human-shaped clothes.
-
-{{< cotton-to-shirt >}}
 
 ### 1. Creating Sheets
 
@@ -37,7 +40,11 @@ CREATE TABLE FIBERS(Fiber PK, Origin, Form)
 - The point of the `CREATE TABLE` syntax to formalize the general idea of establishing a class (table) of entity, with every instance (row) sharing the same set of characteristics (columns).
 - Here, `FIBER` is the class of entity (fibers), with cotton, flax, etc. being instances of that class (each is an example of a fiber). Every instance has an `Origin` and `Form`, though their values may be different.
 
+{{< fig title="Fibers up close"
+    caption="Flax, cotton, silk, wool and rayon fibers, magnified. Image: Ulster Linen." >}}
 ![fibers](https://ulsterlinen.com/wp-content/uploads/2018/05/Fibres-Longitudinal.jpg)
+{{< /fig >}}
+
 Now, let's define a **yarn** as a bunch of fibers combined into a long and thicker continuous strand. There are various ways of doing this.
 ```sql
 CREATE TABLE YARN_CONSTRUCTIONS(Yarn Construction PK, Description)
@@ -49,12 +56,17 @@ CREATE TABLE YARN_CONSTRUCTIONS(Yarn Construction PK, Description)
 | **Plied** | Twist two or more existing yarns together |
 | **Chenille** | Trap short fibers between core strands so they stick out from the sides |
 | **Bouclé** | Combine yarns so that loops or curls form along the strand |
+
 Note that many yarns themselves are simply named after the construction method, e.g Spun yarn, Chenille yarn, etc. We can just imagine a table 
 ```sql
 CREATE TABLE YARNS(Yarn PK, Description)
 ```
 that is identical to `YARN_CONSTRUCTIONS`, with the Yarn name equal to "Yarn" added after the construction name.
+
+{{< fig title="Yarns"
+    caption="Image: Wikimedia Commons." >}}
 ![yarns](https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c0/Yarn_at_Folklife_-_Stierch.jpg/1280px-Yarn_at_Folklife_-_Stierch.jpg?utm_source=en.wikipedia.org&utm_campaign=index&utm_content=thumbnail)
+{{< /fig >}}
 
 #### 1b. Yarns to Sheets
 Now that we have yarn, we can turn yarn into a sheet by interlacing yarns together. There are two main ways to interlace yarn into a sheet:
@@ -80,7 +92,10 @@ CREATE TABLE WEAVE_PATTERNS(Weave Pattern PK, Description)
 | **Twill** | The over-under pattern shifts each row, creating diagonal lines |
 | **Satin** | Yarns pass over several yarns before going under one |
 
+{{< fig title="Plain, twill and satin weaves, and a jersey knit" kind="animation"
+    how="It plays when you scroll to it. Press **Replay** to watch again." >}}
 {{< weave-diagrams >}}
+{{< /fig >}}
 
 #### 1c. Nonwoven Sheet Methods
 We can also directly turn fibers into sheets without turning it into yarn and knitting/weaving it together.
@@ -107,7 +122,10 @@ CREATE TABLE SHEET_MATERIALS(Sheet Material PK, Description)
 | **Vinyl / PVC** | Synthetic plastic sheet material |
 
 That gives us this diagram on how we get a sheet for step 1:
+
+{{< fig title="From fiber to sheet" >}}
 {{< fabric-paths mode="sheet" >}}
+{{< /fig >}}
 
 - Square-cornered boxes are material states (physical structures), while rounded boxes are transformation methods (how we transition from one physical structure to the next).
 - Sheets that are made from fibers are typically called "fabrics".
@@ -192,7 +210,12 @@ CREATE TABLE NAMED_FABRICS(
 | **Linen** | Flax | Spun | — | Plain | — | — | Flat, Textured |
 
 #### Each Named Fabric Is a Path
+
+{{< fig title="Every path from fiber to fabric" kind="interactive"
+    caption="Each named fabric is one path through the chart."
+    how="Pick a fabric to highlight its path." >}}
 {{< fabric-paths >}}
+{{< /fig >}}
 
 And we can now correctly categorize every single term from earlier:
 | Term | Table it belongs in |
