@@ -1,0 +1,227 @@
+{{- /*
+  Felting: fibers become a sheet directly, by entanglement, with no yarn, knitting or weaving.
+  One stage, three states of the same wool fibers:
+    1 Loose fibers           separate, randomly oriented, crimped
+    2 Moisture + agitation + pressure
+                             water drops fall in; two broad plates close in from above and below and rub side to
+                             side, while the fibers jiggle, slide, turn and interlock more and more
+    3 Felt sheet             the plates lift away, leaving the fibers compressed over a compact sheet
+  Below it, the usual route FIBER → YARN → KNIT / WEAVE → SHEET with the skipped steps struck through, and the
+  felting route FIBERS → FELTING → SHEET.
+  Plays once when scrolled into view (about 5 s); the step buttons jump to a state, and Replay replays.
+  With reduced motion it shows the felt sheet, and the step buttons still show each state.
+  Fibers are the warm brown used for staple fibers in fiber-forms.html and fiber-to-yarn.html.
+  Usage in a post: {{< felting-animation >}}
+*/ -}}
+<style>
+  .fe-root {
+    --fe-fiber: #a8692e;
+    --fe-sheet: #ecdcc6;
+    --fe-arrow: #6b7280;
+    --fe-plate: #d1d5db;
+    --fe-plate-mark: #4b5563;
+    --fe-water: #3b82f6;
+    margin: 0 0 var(--content-gap);
+  }
+  :root[data-theme="dark"] .fe-root { --fe-fiber: #d9a066; --fe-sheet: #4a3b2c; --fe-arrow: #9ca3af; --fe-plate: #4b5563; --fe-plate-mark: #e5e7eb; --fe-water: #60a5fa; }
+  .fe-card { padding: 12px 14px; background: var(--entry); border: 1px solid var(--border); border-radius: var(--radius); }
+  .fe-card svg { display: block; width: 100%; max-width: 640px; height: auto; margin: 0 auto; }
+  .fe-fiber { fill: none; stroke: var(--fe-fiber); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .fe-sheet { fill: var(--fe-sheet); }
+  .fe-plate rect { fill: var(--fe-plate); stroke: var(--fe-arrow); stroke-width: 1.2; }
+  .fe-plate path { fill: none; stroke: var(--fe-plate-mark); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .fe-wet { fill: var(--fe-water); fill-opacity: 0.08; }
+  .fe-drop { fill: var(--fe-water); }
+  .fe-steps { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 10px 0 4px; padding: 0; list-style: none; }
+  .fe-steps li { margin: 0; }
+  .fe-steps button {
+    font: inherit; font-size: 13px; padding: 4px 12px; cursor: pointer;
+    color: var(--secondary); background: var(--entry); border: 1.5px solid var(--tertiary); border-radius: 999px;
+  }
+  .fe-steps button[aria-pressed="true"] { color: var(--primary); border-color: var(--primary); font-weight: 700; }
+  .fe-status { margin: 0; min-height: 1.5em; text-align: center; font-size: 14.5px; color: var(--secondary); }
+  .fe-replay { display: flex; justify-content: center; margin-top: 6px; }
+  .fe-replay button {
+    font: inherit; font-size: 13px; padding: 3px 12px; cursor: pointer;
+    color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary); border-radius: 999px;
+  }
+
+  /* Routes: the usual one with its skipped steps struck through, and felting's shortcut */
+  .fe-routes { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center; margin-top: 14px; }
+  .fe-route-label { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: var(--secondary); }
+  .fe-route { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .fe-node { padding: 3px 9px; border-radius: 6px; border: 1.5px solid var(--tertiary); color: var(--primary); background: var(--entry); white-space: nowrap; }
+  .fe-route i { font-style: normal; color: var(--secondary); }
+  .fe-skip { color: var(--secondary); border-style: dashed; text-decoration: line-through; text-decoration-thickness: 2px; }
+  .fe-hl { border-color: var(--fe-fiber); background: var(--fe-sheet); font-weight: 700; }
+  .fe-usual .fe-node:not(.fe-skip) { color: var(--secondary); }
+  .fe-nos { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+  .fe-nos span { font-size: 14px; font-weight: 700; padding: 4px 12px; border-radius: 999px; color: var(--primary); border: 1.5px solid var(--primary); }
+  .fe-nos span::before { content: "✕"; margin-right: 6px; color: var(--fe-fiber); }
+  @media (max-width: 600px) {
+    .fe-routes { grid-template-columns: 1fr; gap: 4px; }
+    .fe-route-label { margin-top: 6px; }
+    .fe-route { font-size: 12px; gap: 4px; }
+    .fe-node { padding: 2px 6px; }
+  }
+</style>
+
+<div class="fe-root">
+  <div class="fe-card">
+    <svg viewBox="0 0 600 260" role="img" aria-label="Loose wool fibers are wetted, then rubbed and pressed between two plates until they tangle into one compact felt sheet"></svg>
+    <ol class="fe-steps" aria-label="States">
+      <li><button type="button" data-step="0" aria-pressed="false">1. Loose fibers</button></li>
+      <li><button type="button" data-step="1" aria-pressed="false">2. Moisture + agitation + pressure</button></li>
+      <li><button type="button" data-step="2" aria-pressed="false">3. Felt sheet</button></li>
+    </ol>
+    <p class="fe-status" aria-live="polite"></p>
+    <div class="fe-replay"><button type="button" data-fe-replay>Replay</button></div>
+  </div>
+
+  <div class="fe-routes">
+    <span class="fe-route-label">USUAL</span>
+    <div class="fe-route fe-usual">
+      <span class="fe-node">FIBER</span><i>→</i><span class="fe-node fe-skip">YARN</span><i>→</i><span class="fe-node fe-skip">KNIT / WEAVE</span><i>→</i><span class="fe-node">SHEET</span>
+    </div>
+    <span class="fe-route-label">FELTING</span>
+    <div class="fe-route">
+      <span class="fe-node">FIBERS</span><i>→</i><span class="fe-node fe-hl">FELTING</span><i>→</i><span class="fe-node">SHEET</span>
+    </div>
+  </div>
+  <div class="fe-nos"><span>No yarn</span><span>No knitting</span><span>No weaving</span></div>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const svg = root.querySelector('svg');
+    const NS = 'http://www.w3.org/2000/svg';
+    const el = (tag, attrs, parent) => {
+      const e = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      parent.appendChild(e);
+      return e;
+    };
+    let seed = 23;
+    const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    const between = (a, b) => a + (b - a) * rand();
+    const lerp = (a, b, p) => a + (b - a) * p;
+    const clamp01 = (x) => Math.max(0, Math.min(1, x));
+    const ease = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); };
+
+    const fiberPath = (cx, cy, ang, len, amp, waves, phase) => {
+      const c = Math.cos(ang), s = Math.sin(ang), pts = [];
+      for (let k = 0; k <= 28; k++) {
+        const u = (k / 28 - 0.5) * len, v = amp * Math.sin((k / 28) * waves * 2 * Math.PI + phase);
+        pts.push(`${(cx + u * c - v * s).toFixed(1)} ${(cy + u * s + v * c).toFixed(1)}`);
+      }
+      return 'M' + pts.join(' L');
+    };
+
+    // ---- The three states of each fiber -------------------------------------------
+    // Loose: one fiber per cell of a jittered 9 x 6 grid, so they start apart.
+    // Agitated: pulled toward a band and turned. Felt: pressed into a thin sheet, more curled.
+    const COLS = 9, ROWS = 6, CW = 520 / COLS, CH = 200 / ROWS;
+    const fibers = [];
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const x = 40 + (c + between(0.25, 0.75)) * CW, y = 30 + (r + between(0.25, 0.75)) * CH;
+      const ang = between(0, Math.PI), turn = between(-1.2, 1.2);
+      fibers.push({
+        len: between(28, 40), waves: between(2.2, 3), phase: between(0, 6), jit: between(0, 6),
+        s: [
+          { x, y, ang, amp: 1.8 },
+          { x: 300 + (x - 300) * 0.82, y: 130 + (y - 130) * 0.45, ang: ang + turn, amp: 2 },
+          { x: 300 + (x - 300) * 0.76 + between(-8, 8), y: 132 + (y - 130) * 0.3 + between(-4, 4), ang: ang + turn + between(-1, 1), amp: 2.4 },
+        ],
+      });
+    }
+
+    const wet = el('rect', { class: 'fe-wet', x: 70, width: 460 }, svg);
+    const sheet = el('rect', { class: 'fe-sheet', x: 88, y: 92, width: 424, height: 80, rx: 12 }, svg);
+    const paths = fibers.map(() => el('path', { class: 'fe-fiber' }, svg));
+    // Moisture: drops that fall into the fibers
+    const drops = [130, 200, 265, 330, 400, 465].map((x, i) => ({
+      x, y0: 14 + (i % 2) * 10, y1: 80 + (i % 3) * 40, delay: (i % 3) * 0.12,
+      e: el('path', { class: 'fe-drop', d: 'M0 -8 C 3 -3, 5 0, 5 2.5 A 5 5 0 0 1 -5 2.5 C -5 0, -3 -3, 0 -8 Z' }, svg),
+    }));
+    // Two broad plates (or hands) that close in from above and below and rub side to side
+    const plate = (dir) => {
+      const g = el('g', { class: 'fe-plate' }, svg);
+      el('rect', { x: 70, y: dir < 0 ? -26 : 0, width: 460, height: 26, rx: 6 }, g);
+      const my = dir < 0 ? -13 : 13; // a side-to-side arrow on the plate's face, for the rubbing
+      el('path', { d: `M270 ${my} H330 M278 ${my - 5} L270 ${my} L278 ${my + 5} M322 ${my - 5} L330 ${my} L322 ${my + 5}` }, g);
+      return g;
+    };
+    const top = plate(-1), bottom = plate(1); // each group's origin is the plate's inner edge
+
+    // ---- Timeline (seconds) -------------------------------------------------------------
+    const T_AGITATE = 0.7, T_PRESS = 3.0, END = 4.8;
+    const STEP_TIMES = [0, 2.2, END]; // step 2 is shown mid-press, with the drops still visible
+    const STATUS = [
+      'Separate, randomly oriented fibers.',
+      'Wet fibers are rubbed and pressed: they slide, turn and start to interlock.',
+      'The plates lift away: the fibers have tangled into one compact sheet of felt.',
+    ];
+    const jitterAt = (t) => clamp01((t - T_AGITATE) / 0.5) * (1 - clamp01((t - T_PRESS) / 1.4));
+    const stepAt = (t) => (t < T_AGITATE ? 0 : t < 3.9 ? 1 : 2);
+
+    const buttons = [...root.querySelectorAll('[data-step]')];
+    const status = root.querySelector('.fe-status');
+    let shownStep = -1;
+    function draw(t) {
+      const u1 = ease((t - T_AGITATE) / (T_PRESS - T_AGITATE)), u2 = ease((t - T_PRESS) / 1.6), j = jitterAt(t);
+      fibers.forEach((f, i) => {
+        const [a, b, c] = f.s, at = (k) => lerp(lerp(a[k], b[k], u1), c[k], u2);
+        const x = at('x') + j * 4 * Math.sin(9 * t + f.jit), y = at('y') + j * 3 * Math.cos(11 * t + f.jit);
+        const ang = at('ang') + j * 0.25 * Math.sin(7 * t + f.jit);
+        paths[i].setAttribute('d', fiberPath(x, y, ang, f.len * lerp(1, 0.88, u2), at('amp'), f.waves, f.phase));
+      });
+      // Plates follow the fibers' outer edge inward, rub in opposite directions, then lift away
+      const lift = ease((t - 4.0) / 0.6), rub = j * 7 * Math.sin(6 * t);
+      const topEdge = lerp(lerp(12, 70, u1), 90, u2) - 40 * lift, botEdge = lerp(lerp(248, 190, u1), 174, u2) + 40 * lift;
+      const plateOpacity = clamp01((t - T_AGITATE) / 0.3) * (1 - lift);
+      top.setAttribute('transform', `translate(${rub.toFixed(1)} ${topEdge.toFixed(1)})`);
+      bottom.setAttribute('transform', `translate(${(-rub).toFixed(1)} ${botEdge.toFixed(1)})`);
+      top.style.opacity = bottom.style.opacity = plateOpacity;
+      wet.setAttribute('y', topEdge);
+      wet.setAttribute('height', Math.max(0, botEdge - topEdge));
+      wet.style.opacity = clamp01((t - T_AGITATE) / 0.6) * (1 - clamp01((t - 3.8) / 0.8));
+      drops.forEach((d) => {
+        const p = clamp01((t - T_AGITATE - d.delay) / 0.7);
+        d.e.setAttribute('transform', `translate(${d.x} ${lerp(d.y0, d.y1, ease(p)).toFixed(1)})`);
+        d.e.style.opacity = p > 0 ? 1 - clamp01((t - T_AGITATE - d.delay - 1.6) / 0.6) : 0; // soak in during the press
+      });
+      sheet.style.opacity = clamp01((t - 3.8) / 1);
+      const k = stepAt(t);
+      if (k !== shownStep) {
+        shownStep = k;
+        buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(i === k)));
+        status.textContent = STATUS[k];
+      }
+    }
+
+    let frame = null;
+    function play() {
+      cancelAnimationFrame(frame);
+      let start = null;
+      const step = (now) => {
+        start ??= now;
+        const t = (now - start) / 1000;
+        draw(Math.min(t, END));
+        if (t < END) frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+    }
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    draw(reduceMotion ? END : 0);
+    buttons.forEach((b, i) => b.addEventListener('click', () => { cancelAnimationFrame(frame); draw(STEP_TIMES[i]); }));
+    root.querySelector('[data-fe-replay]').addEventListener('click', () => (reduceMotion ? draw(END) : play()));
+    if (!reduceMotion) {
+      const io = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) { play(); io.disconnect(); }
+      }, { threshold: 0.3 });
+      io.observe(root);
+    }
+  })();
+</script>

@@ -41,6 +41,7 @@
   .fp-row.on text { fill: var(--fp-color); font-weight: 700; }
 
   .fp-note { text-align: center; font-size: 15px; color: var(--primary); margin: 10px 0 0; min-height: 1.5em; }
+  .fp-aside { display: block; margin-top: 2px; font-size: 13px; color: var(--secondary); }
   .fp-legend { text-align: center; font-size: 13px; color: var(--secondary); margin: 4px 0 0; }
 </style>
 
@@ -91,7 +92,8 @@
       { name: 'Denim', light: '#2563eb', dark: '#60a5fa',
         values: { F: ['Cotton'], YC: ['Spun'], Y: ['Spun yarn'], WP: ['Twill'] },
         path: ['F-YC', 'YC-Y', 'Y-WP', 'WP-SH', 'SH-FS'],
-        note: 'Denim: cotton → spun yarn → twill weave.' },
+        note: 'Denim: cotton → spun yarn → twill weave.',
+        aside: 'Its warp yarn is also dyed indigo before weaving. That step is left out of the chart for simplicity.' },
       { name: 'Silk satin', light: '#9333ea', dark: '#c084fc',
         values: { F: ['Silk'], YC: ['Filament'], Y: ['Filament yarn'], WP: ['Satin'] },
         path: ['F-YC', 'YC-Y', 'Y-WP', 'WP-SH', 'SH-FS'],
@@ -198,6 +200,7 @@
       });
       buttons.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.name === selected));
       note.textContent = f ? f.note : 'Pick a fabric to see its path.';
+      if (f?.aside) { const a = document.createElement('span'); a.className = 'fp-aside'; a.textContent = f.aside; note.append(a); }
     }
 
     FABRICS.forEach((f) => {

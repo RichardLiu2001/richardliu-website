@@ -1,0 +1,206 @@
+{{- /*
+  How fibers become yarn, as two pathways of three stages each:
+    SPUN      short staple fibers → overlap + twist → spun yarn (hairy, because fiber ends stick out)
+    FILAMENT  continuous filaments → bundle / combine → filament yarn (smooth)
+  Plays once when scrolled into view (staple fibers drift together and tilt into a twisted band, filaments
+  converge, then each yarn draws in from the left), with a Replay button. With reduced motion it shows the
+  final frame, which reads on its own as a static diagram.
+  Staple is warm brown and filament is blue, as in fiber-forms.html.
+  Usage in a post: {{< fiber-to-yarn >}}
+*/ -}}
+<style>
+  .fy-root {
+    --fy-staple: #a8692e;
+    --fy-filament: #3d5a99;
+    margin: 0 0 var(--content-gap);
+  }
+  :root[data-theme="dark"] .fy-root { --fy-staple: #d9a066; --fy-filament: #7d9be0; }
+  .fy-row { margin-bottom: 14px; padding: 12px 14px; background: var(--entry); border: 1px solid var(--border); border-radius: var(--radius); }
+  .fy-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 6px; }
+  .fy-row-head b { font-size: 12px; letter-spacing: 0.06em; color: var(--fy-c); }
+  .fy-row-head span { font-size: 14.5px; color: var(--secondary); }
+  .fy-steps { display: grid; grid-template-columns: 1fr 28px 1fr 28px 1fr; align-items: center; }
+  .fy-step { margin: 0; text-align: center; }
+  .fy-step svg { display: block; width: 100%; max-width: 240px; height: auto; margin: 0 auto; overflow: hidden; }
+  .fy-root .fy-step figcaption { margin: 2px 0 0; font-size: 13.5px; font-weight: normal; color: var(--secondary); }
+  .fy-root .fy-step:last-child figcaption { font-weight: 700; color: var(--primary); }
+  .fy-arrow { display: flex; justify-content: center; color: var(--tertiary); }
+  .fy-arrow svg { width: 22px; height: 14px; }
+  .fy-fiber { fill: none; stroke: var(--fy-c); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .fy-body { fill: none; stroke: var(--fy-c); stroke-opacity: 0.3; stroke-width: 16; }
+  .fy-edge { fill: none; stroke: var(--fy-c); stroke-width: 1.4; }
+  .fy-ply { fill: var(--entry); stroke: var(--fy-c); stroke-width: 1.5; }
+  .fy-ply:nth-child(odd) { fill: color-mix(in srgb, var(--fy-c) 28%, var(--entry)); }
+  .fy-twist { fill: none; stroke: var(--secondary); stroke-width: 1.4; }
+  .fy-footer { display: flex; justify-content: center; }
+  .fy-footer button {
+    font: inherit; font-size: 13px; padding: 3px 12px; cursor: pointer;
+    color: var(--primary); background: var(--entry); border: 1px solid var(--tertiary); border-radius: 999px;
+  }
+  /* Phones: stages stack, and the arrows point down */
+  @media (max-width: 600px) {
+    .fy-steps { grid-template-columns: 1fr; gap: 2px; }
+    .fy-arrow svg { transform: rotate(90deg); }
+    .fy-step svg { max-width: 260px; }
+  }
+</style>
+
+{{- $arrow := `<div class="fy-arrow" aria-hidden="true"><svg viewBox="0 0 22 14"><path d="M1 7 H19 M14 2 L20 7 L14 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>` | safeHTML }}
+<div class="fy-root">
+  <div class="fy-row" data-fy="spun" style="--fy-c: var(--fy-staple)">
+    <div class="fy-row-head"><b>SPUN YARN</b><span>Many short fibers have to be made into one continuous strand.</span></div>
+    <div class="fy-steps">
+      <figure class="fy-step"><svg viewBox="0 0 200 110" role="img" aria-label="Short staple fibers, scattered"></svg><figcaption>short staple fibers</figcaption></figure>
+      {{ $arrow }}
+      <figure class="fy-step"><svg viewBox="0 0 200 110" role="img" aria-label="The fibers overlap in a line and are twisted"></svg><figcaption>overlap + twist</figcaption></figure>
+      {{ $arrow }}
+      <figure class="fy-step"><svg viewBox="0 0 200 110" role="img" aria-label="Spun yarn: one thick twisted strand with fiber ends sticking out"></svg><figcaption>spun yarn</figcaption></figure>
+    </div>
+  </div>
+  <div class="fy-row" data-fy="filament" style="--fy-c: var(--fy-filament)">
+    <div class="fy-row-head"><b>FILAMENT YARN</b><span>The fibers are already continuous; they only need combining.</span></div>
+    <div class="fy-steps">
+      <figure class="fy-step"><svg viewBox="0 0 200 110" role="img" aria-label="Several long continuous filaments, spread apart"></svg><figcaption>continuous filaments</figcaption></figure>
+      {{ $arrow }}
+      <figure class="fy-step"><svg viewBox="0 0 200 110" role="img" aria-label="The filaments converge into a bundle"></svg><figcaption>bundle / combine</figcaption></figure>
+      {{ $arrow }}
+      <figure class="fy-step"><svg viewBox="0 0 200 110" role="img" aria-label="Filament yarn: a smooth strand of parallel filaments"></svg><figcaption>filament yarn</figcaption></figure>
+    </div>
+  </div>
+  <div class="fy-footer"><button type="button" data-fy-replay>Replay</button></div>
+</div>
+
+<script>
+  (() => {
+    const root = document.currentScript.previousElementSibling;
+    const NS = 'http://www.w3.org/2000/svg';
+    const uid = 'fy' + Math.random().toString(36).slice(2, 8);
+    const el = (tag, attrs, parent) => {
+      const e = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      parent.appendChild(e);
+      return e;
+    };
+    let seed = 11;
+    const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    const between = (a, b) => a + (b - a) * rand();
+    const lerp = (a, b, p) => a + (b - a) * p;
+    const clamp01 = (x) => Math.max(0, Math.min(1, x));
+    const ease = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); };
+
+    const fiberPath = (cx, cy, ang, len, amp, waves, phase) => {
+      const c = Math.cos(ang), s = Math.sin(ang), pts = [];
+      for (let k = 0; k <= 24; k++) {
+        const u = (k / 24 - 0.5) * len, v = amp * Math.sin((k / 24) * waves * 2 * Math.PI + phase);
+        pts.push(`${(cx + u * c - v * s).toFixed(1)} ${(cy + u * s + v * c).toFixed(1)}`);
+      }
+      return 'M' + pts.join(' L');
+    };
+    // Fades strands out at the left and/or right edge, so they read as continuing past the panel
+    function edgeFade(svg, left, right) {
+      const id = `${uid}-${svg.dataset.n}`;
+      const defs = el('defs', {}, svg);
+      const grad = el('linearGradient', { id: id + 'g', x1: 0, x2: 1, y1: 0, y2: 0 }, defs);
+      [[0, left ? 0 : 1], [0.12, 1], [0.88, 1], [1, right ? 0 : 1]].forEach(([o, a]) => el('stop', { offset: o, 'stop-color': '#fff', 'stop-opacity': a }, grad));
+      el('rect', { x: -10, y: 0, width: 220, height: 110, fill: `url(#${id}g)` }, el('mask', { id: id + 'm', maskUnits: 'userSpaceOnUse', x: -10, y: 0, width: 220, height: 110 }, defs));
+      return el('g', { mask: `url(#${id}m)` }, svg);
+    }
+    // Draws a yarn in from the left: returns the group to draw into and a setter for progress 0..1
+    function reveal(svg) {
+      const id = `${uid}-${svg.dataset.n}c`;
+      const rect = el('rect', { x: -10, y: 0, width: 0, height: 110 }, el('clipPath', { id }, el('defs', {}, svg)));
+      const g = el('g', { 'clip-path': `url(#${id})` }, edgeFade(svg, false, true));
+      return [g, (p) => rect.setAttribute('width', 220 * p)];
+    }
+    // Yarn body: a soft band between two edge lines, centered on y = 55
+    function yarnBody(g, half) {
+      el('path', { class: 'fy-body', d: 'M-10 55 H210', 'stroke-width': half * 2 }, g);
+      el('path', { class: 'fy-edge', d: `M-10 ${55 - half} H210 M-10 ${55 + half} H210` }, g);
+    }
+
+    // ---- Spun: scattered staple → overlapping, tilted (twisted) band → twisted, hairy yarn ----
+    function buildSpun([a, b, c]) {
+      const fibers = Array.from({ length: 13 }, (_, i) => {
+        const len = between(26, 40), r = len / 2 + 3;
+        return {
+          len, phase: between(0, 6),
+          from: { x: between(r, 200 - r), y: between(14 + r * 0.5, 96 - r * 0.5), ang: between(0, Math.PI), amp: 1.4 },
+          to: { x: 24 + i * 12.6, y: 55 + [-6, 1, 7][i % 3], ang: -0.36, amp: 0.7 },
+        };
+      });
+      for (const f of fibers) el('path', { class: 'fy-fiber', d: fiberPath(f.from.x, f.from.y, f.from.ang, f.len, f.from.amp, 2, f.phase) }, a);
+      const moving = fibers.map(() => el('path', { class: 'fy-fiber' }, b));
+      const twist = el('g', { class: 'fy-twist' }, b);
+      el('path', { d: 'M186 36 C 198 40, 198 70, 186 74' }, twist);
+      el('path', { d: 'M184 68 L186 74 L192 71', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, twist);
+
+      const [yarn, setReveal] = reveal(c);
+      // Twisted strand: overlapping slanted capsules, like a rope
+      for (let x = -14; x < 220; x += 9) el('ellipse', { class: 'fy-ply', cx: x, cy: 55, rx: 11, ry: 4.6, transform: `rotate(-58 ${x} 55)` }, yarn);
+      // Hairiness: fiber ends poking out of a spun yarn
+      for (let i = 0; i < 12; i++) {
+        const x = between(4, 196), up = i % 2 === 0, y0 = up ? 44 : 66, dy = (up ? -1 : 1) * between(5, 10);
+        el('path', { class: 'fy-fiber', d: `M${x.toFixed(1)} ${y0} q ${between(-3, 3).toFixed(1)} ${(dy / 2).toFixed(1)} ${between(2, 6).toFixed(1)} ${dy.toFixed(1)}`, 'stroke-width': 1.4 }, yarn);
+      }
+      return (t) => {
+        const p = ease(t / 1.3);
+        fibers.forEach((f, i) => {
+          const ang = lerp(f.from.ang, f.to.ang + (f.from.ang > Math.PI / 2 + f.to.ang ? Math.PI : 0), p);
+          moving[i].setAttribute('d', fiberPath(lerp(f.from.x, f.to.x, p), lerp(f.from.y, f.to.y, p), ang, f.len, lerp(f.from.amp, f.to.amp, p), 2, f.phase));
+        });
+        twist.style.opacity = clamp01((t - 0.9) / 0.4);
+        setReveal(ease((t - 1.2) / 1));
+      };
+    }
+
+    // ---- Filament: spread filaments → converging bundle → smooth filament yarn ----
+    function buildFilament([a, b, c]) {
+      const ys = [21, 38, 55, 72, 89], bundled = ys.map((_, i) => 55 + (i - 2) * 2.8);
+      const wave = (y, amp, ph) => { let d = ''; for (let x = -10; x <= 210; x += 5) d += `${d ? ' L' : 'M'}${x} ${(y + amp * Math.sin(x / 34 + ph)).toFixed(1)}`; return d; };
+      const ga = edgeFade(a, true, true);
+      ys.forEach((y, i) => el('path', { class: 'fy-fiber', d: wave(y, 3, i * 1.3) }, ga));
+      const gb = edgeFade(b, true, false);
+      const strands = ys.map(() => el('path', { class: 'fy-fiber' }, gb));
+      const [yarn, setReveal] = reveal(c);
+      yarnBody(yarn, 9);
+      bundled.forEach((y) => el('path', { class: 'fy-fiber', d: wave(y, 0.8, 0), 'stroke-width': 1.8 }, yarn));
+      return (t) => {
+        const p = ease(t / 1.3);
+        strands.forEach((s, i) => {
+          const yr = lerp(ys[i], bundled[i], p);
+          s.setAttribute('d', `M-10 ${ys[i]} C 70 ${ys[i]}, 120 ${yr.toFixed(1)}, 210 ${yr.toFixed(1)}`);
+        });
+        setReveal(ease((t - 1.2) / 1));
+      };
+    }
+
+    let n = 0;
+    const svgsOf = (row) => [...root.querySelectorAll(`[data-fy="${row}"] .fy-step svg`)].map((s) => ((s.dataset.n = n++), s));
+    const renders = [buildSpun(svgsOf('spun')), buildFilament(svgsOf('filament'))];
+    const END = 2.3; // seconds
+    const draw = (t) => renders.forEach((r) => r(t));
+
+    let frame = null;
+    function play() {
+      cancelAnimationFrame(frame);
+      let start = null;
+      const step = (now) => {
+        start ??= now;
+        const t = (now - start) / 1000;
+        draw(Math.min(t, END));
+        if (t < END) frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+    }
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    draw(reduceMotion ? END : 0);
+    root.querySelector('[data-fy-replay]').addEventListener('click', () => (reduceMotion ? draw(END) : play()));
+    if (!reduceMotion) {
+      const io = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) { play(); io.disconnect(); }
+      }, { threshold: 0.3 });
+      io.observe(root);
+    }
+  })();
+</script>

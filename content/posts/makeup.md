@@ -4,12 +4,6 @@ draft = false
 title = 'Makeup'
 +++
 
-{{< fig title="A face, layer by layer" kind="interactive"
-    caption="Makeup goes on in layers, in a fairly fixed order, from bare skin to the final setting layer."
-    how="Click a step to build the face up to that layer. Press **Expand layers** to fan the layers apart, then click a step to isolate it." >}}
-{{< makeup-layers >}}
-{{< /fig >}}
-
 Where do you think the most valuable real estate in the world is? Manhattan? Or perhaps Hong Kong?
 
 Sike! It’s the **40 square inches of your face**.
@@ -18,6 +12,11 @@ For an area the size of about **4.5 Post-it notes**, humanity has developed foun
 
 **What the fuck do all of these things do? And why the fuck are there so many?**
 
+{{< fig title="A face, layer by layer" kind="interactive"
+    caption="Makeup goes on in layers, in a fairly fixed order, from bare skin to the final setting layer."
+    how="Click a step to build the face up to that layer. Press **Expand layers** to fan the layers apart, then click a step to isolate it." >}}
+{{< makeup-layers >}}
+{{< /fig >}}
 
 ## 1. Goals of Makeup
 

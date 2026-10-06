@@ -11,6 +11,7 @@
 <style>
   .mo-root {
     --mo-accent: #2563eb;
+    --mo-dyn-bg: rgba(37, 99, 235, 0.1);
     --mo-kw: #cf222e; --mo-fn: #6639ba; --mo-str: #0a3069; --mo-num: #0550ae; --mo-op: #0550ae; --mo-txt: #1f2328;
     --mo-lit-bg: #fff1a8; --mo-lit-fg: #1f2328;
     margin: 0 0 var(--content-gap);
@@ -18,6 +19,7 @@
   }
   :root[data-theme="dark"] .mo-root {
     --mo-accent: #60a5fa;
+    --mo-dyn-bg: rgba(96, 165, 250, 0.16);
     --mo-kw: #66d9ef; --mo-fn: #a6e22e; --mo-str: #e6db74; --mo-num: #ae81ff; --mo-op: #f92672; --mo-txt: #f8f8f2;
     --mo-lit-bg: #e6db74; --mo-lit-fg: #272822;
   }
@@ -86,7 +88,11 @@
   .mo-answer { margin: 10px 0 8px; font-size: 17px; line-height: 1.6; transition: opacity .15s ease; }
   .mo-answer.mo-in { animation: mo-in .35s ease-out; }
   @keyframes mo-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  .mo-dyn { color: inherit; background: var(--mo-dyn-bg); box-shadow: inset 0 -2px 0 var(--mo-accent); border-radius: 3px; padding: 0 2px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .mo-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; }
   .mo-rows { font-size: 12px; color: var(--secondary); }
+  .mo-key { font-size: 12.5px; color: var(--secondary); }
+  .mo-key .mo-dyn { font-size: 12px; }
 
   @media (max-width: 600px) {
     .mo-panel { padding: 10px 12px 12px; }
@@ -132,7 +138,10 @@
     <div class="mo-head"><span class="mo-label" data-n="3">RESULT</span><span class="mo-status mo-mono"></span></div>
     <div class="mo-col mo-mono">answer</div>
     <p class="mo-answer" aria-live="polite"></p>
-    <div class="mo-rows mo-mono"></div>
+    <div class="mo-foot">
+      <span class="mo-rows mo-mono"></span>
+      <span class="mo-key"><mark class="mo-dyn">highlighted</mark> = values from the tables; the rest is the query's fixed text</span>
+    </div>
   </section>
 </div>
 
@@ -233,6 +242,10 @@
     const concat = (...xs) => xs.filter((x) => x !== null).join('');                             // CONCAT: skips NULLs
     const coalesce = (a, b) => (a === null ? b : a);
     const anyOf = (table, key, arr) => table.filter((r) => arr.includes(r[key]));                // WHERE r.KEY = ANY(arr)
+    // Marks a value read from a table column, so the result can show it apart from the query's fixed text.
+    // The markers are private-use characters: invisible to the SQL semantics above, swapped for <mark> on display.
+    const COL_OPEN = '\uE000', COL_CLOSE = '\uE001';
+    const col = (v) => COL_OPEN + v + COL_CLOSE;
 
     // ---- Queries: SQL template + an evaluator that returns its single row (or null for no rows) ----
     const PRODUCT_SQL = (v) => `SELECT CONCAT(
@@ -274,19 +287,19 @@ WHERE M.PRODUCT = '${v}';`;
       const m = MAKEUP.find((r) => r.product === v);
       if (!m) return null;
       return concat(
-        initcap(words(m.product)),
+        col(initcap(words(m.product))),
         coalesce(
-          cat(' is used so that ', agg(anyOf(BATS, 'bat', m.bats).map((b) => lower(b.description)), ' and '), '.'),
+          cat(' is used so that ', agg(anyOf(BATS, 'bat', m.bats).map((b) => col(lower(b.description))), ' and '), '.'),
           ' targets no BAT.'),
         cat(' It goes on in the ',
-          agg(anyOf(LAYERS, 'layer', m.layers).map((l) => cat(lower(words(l.layer)), ' layer (step ', l.typical_priority, ')')), ' and the '),
+          agg(anyOf(LAYERS, 'layer', m.layers).map((l) => cat(col(lower(words(l.layer))), ' layer (step ', col(l.typical_priority), ')')), ' and the '),
           '.'),
-        cat(' It is applied with: ', agg(anyOf(TOOLS, 'tool', m.tools).map((t) => lower(words(t.tool))), ', '), '.'),
-        cat(' It comes as: ', agg(anyOf(FORMULATIONS, 'formulation', m.formulations).map((f) => lower(f.formulation)), ', '), '.'),
-        cat(' It alters the ', agg(anyOf(APPEARANCE_CHANGES, 'appearance_change', m.appearance_changes).map((a) => lower(a.appearance_change)), ', '),
-          coalesce(cat(' of: ', agg(anyOf(FACE_REGIONS, 'region', anyOf(BATS, 'bat', m.bats).flatMap((b) => b.regions)).map((r) => lower(words(r.region))), ', ')), ''),
+        cat(' It is applied with: ', agg(anyOf(TOOLS, 'tool', m.tools).map((t) => col(lower(words(t.tool)))), ', '), '.'),
+        cat(' It comes as: ', agg(anyOf(FORMULATIONS, 'formulation', m.formulations).map((f) => col(lower(f.formulation))), ', '), '.'),
+        cat(' It alters the ', agg(anyOf(APPEARANCE_CHANGES, 'appearance_change', m.appearance_changes).map((a) => col(lower(a.appearance_change))), ', '),
+          coalesce(cat(' of: ', agg(anyOf(FACE_REGIONS, 'region', anyOf(BATS, 'bat', m.bats).flatMap((b) => b.regions)).map((r) => col(lower(words(r.region)))), ', ')), ''),
           '.'),
-        cat(' It physically alters: ', agg(anyOf(STRUCTURE_CHANGES, 'structure_change', m.structure_changes).map((s) => lower(words(s.structure_change))), ', '), '.'),
+        cat(' It physically alters: ', agg(anyOf(STRUCTURE_CHANGES, 'structure_change', m.structure_changes).map((s) => col(lower(words(s.structure_change)))), ', '), '.'),
       );
     };
 
@@ -303,8 +316,8 @@ GROUP BY T.TOOL, T.DESCRIPTION;`;
       const t = TOOLS.find((r) => r.tool === v);
       const joined = t ? MAKEUP.filter((m) => m.tools.includes(t.tool)) : [];
       if (!joined.length) return null; // inner join + GROUP BY: no matching products, no row
-      return cat(initcap(words(t.tool)), ': ', lower(t.description), '. It is used with: ',
-        agg(joined.map((m) => lower(words(m.product))), ', '), '.');
+      return cat(col(initcap(words(t.tool))), ': ', col(lower(t.description)), '. It is used with: ',
+        agg(joined.map((m) => col(lower(words(m.product)))), ', '), '.');
     };
 
     const BAT_SQL = (v) => `SELECT 'To get ' || LOWER(REPLACE(B.BAT, '_', ' '))
@@ -320,8 +333,8 @@ GROUP BY B.BAT, B.DESCRIPTION;`;
       const b = BATS.find((r) => r.bat === v);
       const joined = b ? MAKEUP.filter((m) => m.bats.includes(b.bat)) : [];
       if (!joined.length) return null;
-      return cat('To get ', lower(words(b.bat)), ' (', lower(b.description), '), use: ',
-        agg(joined.map((m) => cat(lower(words(m.product)), ' (', lower(m.description), ')')), ', '), '.');
+      return cat('To get ', col(lower(words(b.bat))), ' (', col(lower(b.description)), '), use: ',
+        agg(joined.map((m) => cat(col(lower(words(m.product))), ' (', col(lower(m.description)), ')')), ', '), '.');
     };
 
     // ---- SQL highlighting --------------------------------------------------------
@@ -394,7 +407,7 @@ GROUP BY B.BAT, B.DESCRIPTION;`;
       if (flash && lit) lit.classList.add('mo-flash');
     };
     const showResult = (q, animate) => {
-      answerEl.textContent = q.answer ?? '';
+      answerEl.innerHTML = esc(q.answer ?? '').replace(/\uE000/g, '<mark class="mo-dyn">').replace(/\uE001/g, '</mark>');
       rowsEl.textContent = q.answer === null ? '(0 rows)' : '(1 row)';
       resultStatus.textContent = 'returned';
       answerEl.classList.remove('mo-in');
